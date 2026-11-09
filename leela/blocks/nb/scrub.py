@@ -1,5 +1,5 @@
 "Which code cells may re-run on every tick of a scrubbed number: an allowlist of effects, checked on the syntax tree."
-import ast, builtins, math, cmath, statistics, itertools
+import ast, builtins, math, cmath, re, statistics, itertools, sys
 
 def _w(mod, names): return {f'{mod}.{n}' for n in names.split()}
 def _all(mod, m): return {f'{mod}.{n}' for n in dir(m) if not n.startswith('_')}
@@ -37,7 +37,12 @@ RNG_M = frozenset('random normal uniform integers choice standard_normal permuta
 MUT_M = frozenset('append extend insert pop remove clear update add discard setdefault popitem sort reverse fill resize appendleft popleft extendleft rotate'.split()) | RNG_M
 ATTRS = frozenset('shape dtype T real imag size ndim loc iloc at iat columns index values name str dt flat nbytes itemsize year month day hour minute second microsecond numerator denominator'.split())
 BAD_KW = frozenset('out inplace file filename fname path mode dir root buf path_or_buf fp stream'.split())
-SIZED = frozenset('range ones zeros empty full arange linspace logspace tile repeat eye identity rand randn randint random normal uniform choice integers standard_normal reshape sleep'.split())
+SIZED = frozenset('range ones zeros empty full arange linspace logspace tile repeat eye identity rand randn randint random normal uniform choice integers standard_normal reshape sleep factorial pow comb perm bytes ljust rjust center zfill permutations combinations product'.split())
+ELEMS = 10**6
+CONV = {'np': 'numpy', 'pd': 'pandas', 'plt': 'matplotlib.pyplot', 'mpl': 'matplotlib'}
+#: Calls that take an `out` array by position, and how many positional arguments they take without it.
+OUTCAP = {**{k: 2 for k in 'add subtract multiply divide power mod maximum minimum dot matmul inner outer cumsum cumprod round around sum prod mean std var min max concatenate stack'.split()},
+          **{k: 1 for k in 'sqrt exp floor ceil sin cos tan log log10 abs absolute sign square hstack vstack'.split()}, 'clip': 3}
 CAP, WORK = 10000, 10**6
 NODES = frozenset(getattr(ast, n) for n in ('Module Expr Assign AugAssign AnnAssign For While If Break Continue Pass Return FunctionDef Try ExceptHandler Raise Assert Delete Import ImportFrom alias '
   'arguments arg BoolOp BinOp UnaryOp Lambda IfExp Dict Set ListComp SetComp DictComp GeneratorExp comprehension Compare Call keyword JoinedStr FormattedValue Constant Attribute Subscript '
@@ -52,27 +57,48 @@ class No(Exception): pass
 def okpath(p): return p in ALLOW
 def modpath(p): return any(a.startswith(p + '.') for a in ALLOW)
 
-def fold(n, memo=None):
-    "The number a constant expression comes to, or None."
+def fold(n, env=None):
+    "The number a constant expression comes to, or None. `env` gives the numbers names were set to earlier in the cell."
     if isinstance(n, ast.Constant): return n.value if type(n.value) in (int, float) else None
+    if isinstance(n, ast.Name): return (env or {}).get(n.id)
     if isinstance(n, ast.UnaryOp) and isinstance(n.op, (ast.USub, ast.UAdd)):
-        v = fold(n.operand); return None if v is None else -v if isinstance(n.op, ast.USub) else v
-    if isinstance(n, ast.BinOp) and isinstance(n.op, (ast.Add, ast.Sub, ast.Mult, ast.Pow, ast.FloorDiv, ast.Div, ast.Mod)):
-        a, b = fold(n.left), fold(n.right)
+        v = fold(n.operand, env); return None if v is None else -v if isinstance(n.op, ast.USub) else v
+    if isinstance(n, ast.BinOp) and isinstance(n.op, (ast.Add, ast.Sub, ast.Mult, ast.Pow, ast.FloorDiv, ast.Div, ast.Mod, ast.LShift)):
+        a, b = fold(n.left, env), fold(n.right, env)
         if a is None or b is None: return None
         try:
             if isinstance(n.op, ast.Pow): return float('inf') if abs(b) > 64 or abs(a) > 1e6 else a ** b
-            return {ast.Add: lambda: a + b, ast.Sub: lambda: a - b, ast.Mult: lambda: a * b, ast.FloorDiv: lambda: a // b, ast.Div: lambda: a / b, ast.Mod: lambda: a % b}[type(n.op)]()
+            return {ast.Add: lambda: a + b, ast.Sub: lambda: a - b, ast.Mult: lambda: a * b, ast.FloorDiv: lambda: a // b, ast.Div: lambda: a / b, ast.Mod: lambda: a % b, ast.LShift: lambda: float('inf') if b > 64 else int(a) << int(b)}[type(n.op)]()
         except (ArithmeticError, ValueError, TypeError): return None
     return None
 
-def huge(tree):
+def huge(tree, env=None):
     "Whether some constant expression in `tree` is over the cap."
-    return any((v := fold(n)) is not None and (v != v or abs(v) > CAP) for n in ast.walk(tree))
+    return any((v := fold(n, env)) is not None and (v != v or abs(v) > CAP) for n in ast.walk(tree))
+
+def numbers(n, env=None):
+    "The numbers of a size argument, a tuple or list of them, flattened."
+    if isinstance(n, (ast.Tuple, ast.List)): return [v for e in n.elts for v in numbers(e, env)]
+    return [v] if (v := fold(n, env)) is not None else []
+
+def count(name, args, kws, env=None):
+    "How many elements a sized call asks for when its arguments are numbers, else None."
+    nums = [numbers(a, env) for a in args]
+    if name in ('range', 'arange') and nums and all(len(x) == 1 for x in nums):
+        v = [x[0] for x in nums]; start, stop, step = (0, v[0], 1) if len(v) == 1 else (v[0], v[1], v[2] if len(v) > 2 else 1)
+        return abs((stop - start) / step) if step else None
+    if name in ('linspace', 'logspace'):
+        n = args[2] if len(args) > 2 else next((k.value for k in kws if k.arg == 'num'), None)
+        return fold(n, env) if n is not None else 50
+    flat = [x for xs in nums for x in xs]
+    if not flat: return None
+    out = 1
+    for x in flat: out *= max(1, abs(x))
+    return out
 
 class Check(ast.NodeVisitor):
     def __init__(self):
-        self.imports, self.glob, self.funcs, self.outside, self.scopes, self.mult = {}, {}, set(), set(), [], 1
+        self.imports, self.glob, self.fns, self.outside, self.scopes, self.mult, self.consts, self.cond = {}, {}, {}, set(), [], 1, {}, 0
     def no(self, why): raise No(why)
     def visit(self, n):
         if type(n) not in NODES: self.no(f'it uses {type(n).__name__}, which scrubbing does not re-run')
@@ -95,8 +121,14 @@ class Check(ast.NodeVisitor):
         if name.startswith('__'): self.no(f'it uses {name}')
         if name in self.outside and (not self.scopes or name not in self.scopes[-1]): self.no(f'it changes `{name}`, which another cell made')
         if name in self.imports: self.no(f'it replaces the import `{name}`')
-        (self.scopes[-1] if self.scopes else self.glob)[name] = taint
-        (self.funcs.add if fn else self.funcs.discard)(name)
+        if hasattr(builtins, name): self.no(f'it rebinds the builtin {name}')
+        d = self.scopes[-1] if self.scopes else self.glob
+        d[name] = taint; self.consts.pop(name, None)
+        (self.fns.setdefault(id(d), set()).add if fn else self.fns.setdefault(id(d), set()).discard)(name)
+    def isfn(self, name):
+        for d in [*reversed(self.scopes), self.glob]:
+            if name in d: return name in self.fns.get(id(d), ())
+        return False
     def root(self, n):
         while isinstance(n, (ast.Attribute, ast.Subscript)): n = n.value
         return n
@@ -115,6 +147,8 @@ class Check(ast.NodeVisitor):
         if k == 'import' and not okpath(self.imports[n.id]): self.no(f'it uses the module `{n.id}` as a value')
         if k == 'outside' and hasattr(builtins, n.id): self.no(f'it uses {n.id}')
         if k == 'outside': self.outside.add(n.id)
+    def visit_Constant(self, n):
+        if isinstance(n.value, str) and re.search(r'\{[^{}]*[.\[]\s*_', n.value): self.no('it formats a string with a private attribute')
     def chain(self, n):
         "The dotted path of an attribute chain on an imported name, or None when it starts elsewhere."
         parts = []
@@ -140,7 +174,7 @@ class Check(ast.NodeVisitor):
         if isinstance(f, ast.Name):
             k, v = self.look(f.id)
             if k == 'builtin': pass
-            elif k == 'local' and f.id in self.funcs: pass
+            elif k == 'local' and self.isfn(f.id): pass
             elif k == 'import':
                 if not okpath(v): self.no(f'it calls {v}, which is not on the safe list')
             else: self.no(f'it calls `{f.id}`, which is not on the safe list')
@@ -149,14 +183,28 @@ class Check(ast.NodeVisitor):
             self.visit(f); name = self.chain(f) or f.attr
         else: self.no('it calls something it cannot name')
         last = name.split('.')[-1]
-        if name.endswith('time.sleep') and not (len(n.args) == 1 and (v := fold(n.args[0])) is not None and 0 <= v * self.mult <= 1): self.no('it sleeps more than 1 second')
-        if last in SIZED and any(huge(a) for a in [*n.args, *[k.value for k in n.keywords]]): self.no(f'it asks {last} for more than {CAP}')
+        if last == 'iter' and k == 'builtin' and len(n.args) > 1: self.no('it calls iter with a sentinel, which can run forever')
+        if last in OUTCAP and (len(n.args) > OUTCAP[last] - (0 if self.chain(f) is not None or isinstance(f, ast.Name) else 1)) and not (k == 'builtin' if isinstance(f, ast.Name) else False): self.no(f'it passes {last} an output array by position')
+        if last == 'sleep' and self.scopes: self.no('it sleeps inside a function')
+        if last in ('figure', 'subplots') and any(k2.arg == 'figsize' and any(abs(x) > 50 for x in numbers(k2.value, self.consts)) or k2.arg == 'dpi' and (fold(k2.value, self.consts) or 0) > 300 for k2 in n.keywords): self.no('it asks for a very large figure')
+        if name.endswith('time.sleep') and not (len(n.args) == 1 and (v := fold(n.args[0], self.consts)) is not None and 0 <= v * self.mult <= 1): self.no('it sleeps more than 1 second')
+        if last in SIZED:
+            if any(huge(a, self.consts) for a in [*n.args, *[k2.value for k2 in n.keywords]]): self.no(f'it asks {last} for more than {CAP}')
+            if (c := count(last, n.args, n.keywords, self.consts)) is not None and c > ELEMS: self.no(f'it asks {last} for more than {ELEMS} elements')
         for a in [*n.args, *[k.value for k in n.keywords]]: self.visit(a)
+    def seqlike(self, n):
+        if isinstance(n, (ast.List, ast.Tuple, ast.ListComp)): return True
+        if isinstance(n, ast.Constant): return isinstance(n.value, (str, bytes))
+        return isinstance(n, ast.BinOp) and isinstance(n.op, ast.Mult) and (self.seqlike(n.left) or self.seqlike(n.right))
+    def factors(self, n):
+        return [*self.factors(n.left), *self.factors(n.right)] if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Mult) else [n]
     def visit_BinOp(self, n):
-        seq = (ast.List, ast.Tuple, ast.ListComp)
-        if isinstance(n.op, ast.Mult) and (isinstance(n.left, seq + (ast.Constant,)) or isinstance(n.right, seq + (ast.Constant,))):
-            if any(isinstance(x, seq) or (isinstance(x, ast.Constant) and isinstance(x.value, (str, bytes))) for x in (n.left, n.right)) and huge(n): self.no(f'it repeats a sequence more than {CAP} times')
-        if isinstance(n.op, ast.Pow) and (v := fold(n.right)) is not None and v > 1000: self.no('it raises to a huge power')
+        if isinstance(n.op, ast.Mult) and self.seqlike(n):
+            out = 1
+            for f in self.factors(n):
+                if (v := fold(f, self.consts)) is not None: out *= max(1, abs(v))
+            if out > CAP: self.no(f'it repeats a sequence more than {CAP} times')
+        if isinstance(n.op, (ast.Pow, ast.LShift)) and (v := fold(n.right, self.consts)) is not None and v > (1000 if isinstance(n.op, ast.Pow) else 64): self.no('it raises or shifts to a huge size')
         self.generic_visit(n)
     def loop(self, it):
         "Multiplies the work by the size of `it` when it is a range of constants."
@@ -169,6 +217,7 @@ class Check(ast.NodeVisitor):
     def visit_Assign(self, n):
         self.visit(n.value)
         for t in n.targets: self.target(t, self.tainted(n.value), isinstance(n.value, ast.Lambda))
+        if len(n.targets) == 1 and isinstance(n.targets[0], ast.Name) and not self.scopes and not self.cond and (v := fold(n.value, self.consts)) is not None: self.consts[n.targets[0].id] = v
     def visit_AnnAssign(self, n):
         self.visit(n.annotation)
         if n.value: self.visit(n.value)
@@ -179,7 +228,7 @@ class Check(ast.NodeVisitor):
         if isinstance(t, ast.Name):
             if self.look(t.id) != ('local', False): self.no(f'it changes `{t.id}`, which this cell did not make')
         else: self.target(t)
-        if isinstance(n.op, ast.Pow) and (v := fold(n.value)) is not None and v > 1000: self.no('it raises to a huge power')
+        if isinstance(n.op, ast.Pow) and (v := fold(n.value, self.consts)) is not None and v > 1000: self.no('it raises to a huge power')
     def visit_Delete(self, n):
         for t in n.targets:
             if isinstance(t, ast.Name):
@@ -188,9 +237,10 @@ class Check(ast.NodeVisitor):
     def visit_NamedExpr(self, n): self.visit(n.value); self.target(n.target, self.tainted(n.value))
     def maybe(self, f, *a):
         "Runs `f`; a module-level name first bound inside it may be unbound on another path, so it may be a name another cell made: it counts as tainted."
-        before = set(self.glob)
+        before = set(self.glob); self.cond += 1
         try: return f(*a)
         finally:
+            self.cond -= 1
             if not self.scopes: [self.glob.__setitem__(k, True) for k in set(self.glob) - before]
     def visit_If(self, n): self.maybe(self.generic_visit, n)
     def visit_For(self, n): self.maybe(self.for_, n)
@@ -200,13 +250,14 @@ class Check(ast.NodeVisitor):
         [self.visit(x) for x in (*n.body, *n.orelse)]; self.mult = keep
     def visit_While(self, n): self.maybe(self.while_, n)
     def while_(self, n):
-        if isinstance(n.test, ast.Constant) and n.test.value and not any(isinstance(x, ast.Break) for b in n.body for x in ast.walk(b)): self.no('it loops forever')
+        if not (isinstance(n.test, ast.Compare) or isinstance(n.test, ast.BoolOp) and all(isinstance(v, ast.Compare) for v in n.test.values)): self.no('it has a while loop that a comparison does not bound')
         self.visit(n.test); keep = self.mult; self.mult *= 100
         if self.mult > WORK: self.no('its loops nest too deep to re-run live')
         [self.visit(x) for x in (*n.body, *n.orelse)]; self.mult = keep
     def visit_Try(self, n): self.maybe(lambda: [self.visit(x) for x in (*n.body, *n.handlers, *n.orelse, *n.finalbody)])
     def visit_ExceptHandler(self, n):
-        if n.type: self.visit(n.type)
+        if n.type is None or any(isinstance(x, ast.Name) and x.id in ('BaseException', 'KeyboardInterrupt', 'SystemExit') for x in ast.walk(n.type)): self.no('it catches interrupts, so it could not be stopped')
+        self.visit(n.type)
         d = self.scopes[-1] if self.scopes else self.glob
         had = n.name in d if n.name else False; old = d.get(n.name)
         if n.name: self.bind(n.name)
@@ -218,12 +269,14 @@ class Check(ast.NodeVisitor):
         for a in n.names:
             if not (okpath(a.name) or modpath(a.name)): self.no(f'it imports {a.name}, which is not on the safe list')
             name = a.asname or a.name.split('.')[0]
+            if (a.asname in CONV and a.name != CONV[a.asname]) or (a.asname in sys.stdlib_module_names and a.asname != a.name.split('.')[0]): self.no(f'it imports {a.name} as {a.asname}, which is another module\'s usual name')
             self.bind(name); self.imports[name] = a.name if a.asname else a.name.split('.')[0]; self.glob.pop(name, None)
     def visit_ImportFrom(self, n):
         if n.level or not n.module: self.no('it imports a relative module')
         for a in n.names:
             p = f'{n.module}.{a.name}'
             if a.name == '*' or not (okpath(p) or modpath(p)): self.no(f'it imports {p}, which is not on the safe list')
+            if ((a.asname or a.name) in CONV and p != CONV[a.asname or a.name]) or ((a.asname or a.name) in sys.stdlib_module_names and p.split('.')[0] != (a.asname or a.name)): self.no(f'it imports {p} as {a.asname or a.name}, which is another module\'s usual name')
             self.bind(a.asname or a.name); self.imports[a.asname or a.name] = p; self.glob.pop(a.asname or a.name, None)
     def scope(self, names, body):
         self.scopes.append(names); keep = self.mult
@@ -274,3 +327,8 @@ def scrub_why(source):
     except Exception: return 'it could not be checked'
 
 def scrub_ok(source): return not scrub_why(source)
+
+def scrub_names(source):
+    "The names a cell reads that another cell made, sorted; [] for a cell that does not pass the check."
+    try: c = Check(); c.visit(ast.parse(source)); return sorted(c.outside)
+    except Exception: return []

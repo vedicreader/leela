@@ -123,3 +123,30 @@ def test_the_gate_stops_when_a_run_says_it_is_too_slow():
       return seen;
     }''')
     assert got == [1]
+
+CORPUS2 = json.loads((ROOT/'tests'/'scrub_corpus2.json').read_text())
+
+@pytest.mark.parametrize('case', CORPUS2, ids=[c['name'] for c in CORPUS2])
+def test_the_second_review_corpus_keeps_its_verdict(case):
+    "The second review's 170 snippets. A snippet the check accepts reads outside names only through the type gate and runs only in the worker; every control is refused."
+    from leela.blocks.nb.scrub import scrub_names
+    why = scrub_why(case['src'])
+    assert bool(why) == (case['want'] == 'refuse'), (case['name'], why)
+    if case['control']: assert why
+    if not why: assert scrub_names(case['src']) == case['names']
+
+R4_RULES = [('list(iter(int, 1))', 'sentinel'), ('while True:\n    pass', 'while'), ('while not 0:\n    pass', 'while'), ('while True:\n    try:\n        pass\n    except:\n        pass', 'while'),
+            ('try:\n    pass\nexcept:\n    pass', 'interrupts'), ('try:\n    pass\nexcept BaseException:\n    pass', 'interrupts'),
+            ('import numpy as np\nnp.add(arr, 1, arr)', 'output array'), ('import numpy as np\nnp.clip(arr, 0, 1, arr)', 'output array'), ('arr.round(0, arr)', 'output array'),
+            ('import numpy as np\nnp.ones((5000, 5000))', 'elements'), ('import numpy as np\nnp.arange(0, 9999, 0.0001)', 'elements'), ('[0] * 9999 * 9999', 'repeats'),
+            ('n = 10**9\n"a" * n', 'repeats'), ('n = 10**8\nx = 7**n', 'huge'), ('1 << 10**9', 'huge'), ('import math\nmath.factorial(10**6)', 'more than'),
+            ('import time\ndef f(): time.sleep(1)\nfor i in range(50): f()', 'inside a function'), ('len = 3', 'builtin'), ('from numpy import sum', 'builtin'),
+            ('import numpy as pd', 'usual name'), ('import numpy as os', 'usual name'), ('import numpy as np\nnp.zeros((3, 3)).shape', ''), ('"{0.__class__}".format(1)', 'private')]
+
+@pytest.mark.parametrize('src,word', R4_RULES)
+def test_the_second_review_rules(src, word):
+    why = scrub_why(src)
+    assert (word in why) if word else not why, (src, why)
+
+def test_a_def_s_function_names_are_its_own():
+    assert not scrub_ok('def f(h): return h()\nf(lambda: 1)') and scrub_ok('h = lambda: 1\ndef f(): return 2\nf()')

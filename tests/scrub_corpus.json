@@ -1465,8 +1465,8 @@
 {
 "name": "while with break",
 "src": "i = 0\nwhile True:\n    i += 1\n    if i > 3: break",
-"want": "accept",
-"judgement": false,
+"want": "refuse",
+"judgement": true,
 "label": "added"
 },
 {

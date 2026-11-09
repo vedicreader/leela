@@ -1,0 +1,1330 @@
+[
+{
+"name": "map_fn",
+"src": "list(map(fn, [1, 2]))",
+"want": "accept",
+"names": [
+"fn"
+],
+"control": false
+},
+{
+"name": "filter_fn",
+"src": "list(filter(fn, [1]))",
+"want": "accept",
+"names": [
+"fn"
+],
+"control": false
+},
+{
+"name": "sorted_key",
+"src": "sorted([2, 1], key=fn)",
+"want": "accept",
+"names": [
+"fn"
+],
+"control": false
+},
+{
+"name": "max_key",
+"src": "max([1, 2], key=fn)",
+"want": "accept",
+"names": [
+"fn"
+],
+"control": false
+},
+{
+"name": "reduce_fn",
+"src": "import functools\nfunctools.reduce(fn, [1, 2, 3])",
+"want": "accept",
+"names": [
+"fn"
+],
+"control": false
+},
+{
+"name": "partial_map",
+"src": "import functools\nlist(map(functools.partial(fn, 1), [1]))",
+"want": "accept",
+"names": [
+"fn"
+],
+"control": false
+},
+{
+"name": "iter_sentinel",
+"src": "list(iter(fn, None))",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "starmap_fn",
+"src": "import itertools\nlist(itertools.starmap(fn, [(1,)]))",
+"want": "accept",
+"names": [
+"fn"
+],
+"control": false
+},
+{
+"name": "takewhile_fn",
+"src": "import itertools\nlist(itertools.takewhile(fn, [1, 2]))",
+"want": "accept",
+"names": [
+"fn"
+],
+"control": false
+},
+{
+"name": "accumulate_fn",
+"src": "import itertools\nlist(itertools.accumulate([1, 2, 3], fn))",
+"want": "accept",
+"names": [
+"fn"
+],
+"control": false
+},
+{
+"name": "defaultdict_fn",
+"src": "import collections\ncollections.defaultdict(fn)[\"k\"]",
+"want": "accept",
+"names": [
+"fn"
+],
+"control": false
+},
+{
+"name": "param_named_like_func",
+"src": "def h(): pass\ndef k(h): return h()\nk(fn)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "sort_values_key",
+"src": "import pandas as pd\npd.DataFrame({\"a\": [3, 1]}).sort_values(\"a\", key=fn)",
+"want": "accept",
+"names": [
+"fn"
+],
+"control": false
+},
+{
+"name": "groupby_key",
+"src": "import itertools\nlist(itertools.groupby([1, 2], key=fn))",
+"want": "accept",
+"names": [
+"fn"
+],
+"control": false
+},
+{
+"name": "any_map",
+"src": "any(map(fn, [1]))",
+"want": "accept",
+"names": [
+"fn"
+],
+"control": false
+},
+{
+"name": "filterfalse_fn",
+"src": "import itertools\nlist(itertools.filterfalse(fn, [1]))",
+"want": "accept",
+"names": [
+"fn"
+],
+"control": false
+},
+{
+"name": "dropwhile_fn",
+"src": "import itertools\nlist(itertools.dropwhile(fn, [1]))",
+"want": "accept",
+"names": [
+"fn"
+],
+"control": false
+},
+{
+"name": "counter_map",
+"src": "import collections\ncollections.Counter(map(fn, [1]))",
+"want": "accept",
+"names": [
+"fn"
+],
+"control": false
+},
+{
+"name": "namedtuple_in_map",
+"src": "import collections\nlist(map(collections.namedtuple(\"P\", \"x\"), [1]))",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "sum_map_fn",
+"src": "sum(map(fn, [1, 2]))",
+"want": "accept",
+"names": [
+"fn"
+],
+"control": false
+},
+{
+"name": "m_get",
+"src": "spy.get(1)",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "m_head_http",
+"src": "sess.head(\"http://example.invalid\")",
+"want": "accept",
+"names": [
+"sess"
+],
+"control": false
+},
+{
+"name": "m_queue_get",
+"src": "q.get()",
+"want": "accept",
+"names": [
+"q"
+],
+"control": false
+},
+{
+"name": "m_join",
+"src": "spy.join()",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "m_copy",
+"src": "spy.copy()",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "m_items",
+"src": "spy.items()",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "m_plot",
+"src": "spy.plot()",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "m_describe",
+"src": "spy.describe()",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "m_values_prop",
+"src": "spy.values",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "m_name_prop",
+"src": "spy.name",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "m_shape_prop",
+"src": "spy.shape",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "m_index_call",
+"src": "spy.index(1)",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "m_count",
+"src": "spy.count(1)",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_repr",
+"src": "repr(spy)",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_print",
+"src": "print(spy)",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_len",
+"src": "len(spy)",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_getitem",
+"src": "spy[3]",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_add",
+"src": "spy + 1",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_bool",
+"src": "bool(spy)",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_in",
+"src": "1 in spy",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_abs",
+"src": "abs(spy)",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_round",
+"src": "round(spy)",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_int",
+"src": "int(spy)",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_float",
+"src": "float(spy)",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_fstring",
+"src": "f\"{spy!r}\"",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_format_attr",
+"src": "\"{0.name}\".format(spy)",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_display",
+"src": "display(spy)",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_sorted",
+"src": "sorted([spy, spy])",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_hash",
+"src": "hash(spy)",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_eq",
+"src": "spy == 1",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_iter",
+"src": "for v in spy:\n    pass",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_format_builtin",
+"src": "format(spy, \"x\")",
+"want": "accept",
+"names": [
+"spy"
+],
+"control": false
+},
+{
+"name": "d_chain_from_iter",
+"src": "import itertools\nlist(itertools.chain.from_iterable(spy))",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "drain_list",
+"src": "list(gen)",
+"want": "accept",
+"names": [
+"gen"
+],
+"control": false
+},
+{
+"name": "drain_sum",
+"src": "sum(gen)",
+"want": "accept",
+"names": [
+"gen"
+],
+"control": false
+},
+{
+"name": "drain_for",
+"src": "for v in gen:\n    pass",
+"want": "accept",
+"names": [
+"gen"
+],
+"control": false
+},
+{
+"name": "drain_deque",
+"src": "import collections\ncollections.deque(gen)",
+"want": "accept",
+"names": [
+"gen"
+],
+"control": false
+},
+{
+"name": "loop_carried_append",
+"src": "a = []\nfor i in range(2):\n    a.append(1)\n    a = lst",
+"want": "accept",
+"names": [
+"lst"
+],
+"control": false
+},
+{
+"name": "loop_carried_aug",
+"src": "a = []\nfor i in range(2):\n    a += [1]\n    a = lst",
+"want": "accept",
+"names": [
+"lst"
+],
+"control": false
+},
+{
+"name": "while_carried",
+"src": "a = []\ni = 0\nwhile i < 2:\n    a.append(1)\n    a = lst\n    i += 1",
+"want": "accept",
+"names": [
+"lst"
+],
+"control": false
+},
+{
+"name": "closure_rebind",
+"src": "g = []\ndef f(): g.append(1)\ng = lst\nf()",
+"want": "accept",
+"names": [
+"lst"
+],
+"control": false
+},
+{
+"name": "func_returns_outside",
+"src": "def f(): return lst\nf().append(9)",
+"want": "accept",
+"names": [
+"lst"
+],
+"control": false
+},
+{
+"name": "func_returns_outside_var",
+"src": "def f(): return lst\nh = f()\nh.append(9)",
+"want": "accept",
+"names": [
+"lst"
+],
+"control": false
+},
+{
+"name": "func_returns_arr_fill",
+"src": "def f(): return arr\nf().fill(7)",
+"want": "accept",
+"names": [
+"arr"
+],
+"control": false
+},
+{
+"name": "func_returns_arr_setitem",
+"src": "def f(): return arr\nv = f()\nv[0] = 5",
+"want": "accept",
+"names": [
+"arr"
+],
+"control": false
+},
+{
+"name": "box_append_launder",
+"src": "box = []\nbox.append(lst)\nbox[0].append(9)",
+"want": "accept",
+"names": [
+"lst"
+],
+"control": false
+},
+{
+"name": "dict_launder",
+"src": "dd = {}\ndd[\"k\"] = lst\ndd[\"k\"].append(9)",
+"want": "accept",
+"names": [
+"lst"
+],
+"control": false
+},
+{
+"name": "dict_launder_arr",
+"src": "dd = {}\ndd[1] = arr\nb = dd[1]\nb[0] = 3",
+"want": "accept",
+"names": [
+"arr"
+],
+"control": false
+},
+{
+"name": "list_wrap_call",
+"src": "def f(): return lst\nq2 = [f()]\nq2[0].append(1)",
+"want": "accept",
+"names": [
+"lst"
+],
+"control": false
+},
+{
+"name": "for_over_wrapped_call",
+"src": "def f(): return lst\nfor v in [f()]:\n    v.append(1)",
+"want": "accept",
+"names": [
+"lst"
+],
+"control": false
+},
+{
+"name": "tuple_unpack_call",
+"src": "def f(): return lst\nx, y = f(), 1\nx.append(1)",
+"want": "accept",
+"names": [
+"lst"
+],
+"control": false
+},
+{
+"name": "except_as_deletes",
+"src": "try:\n    1 / 0\nexcept ZeroDivisionError as keep:\n    pass",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "plain_overwrite",
+"src": "data = 0",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "for_target_overwrite",
+"src": "for lst in range(2):\n    pass",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "import_as_clobber",
+"src": "import numpy as pd",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "from_import_builtin_shadow",
+"src": "from numpy import sum, max, min",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "from_math_e",
+"src": "from math import e",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "np_add_out",
+"src": "import numpy as np\nnp.add(arr, 1, arr)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "np_sqrt_out",
+"src": "import numpy as np\nnp.sqrt(arr, arr)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "np_cumsum_out",
+"src": "import numpy as np\nnp.cumsum(arr, None, None, arr)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "np_clip_out",
+"src": "import numpy as np\nnp.clip(arr, 0, 1, arr)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "np_round_out",
+"src": "import numpy as np\nnp.round(arr, 0, arr)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "np_multiply_out",
+"src": "import numpy as np\nnp.multiply(arr, 2, arr)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "np_dot_out",
+"src": "import numpy as np\nnp.dot(m2, m2, m3)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "np_matmul_out",
+"src": "import numpy as np\nnp.matmul(m2, m2, m3)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "np_maximum_out",
+"src": "import numpy as np\nnp.maximum(arr, 5, arr)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "np_floor_out",
+"src": "import numpy as np\nnp.floor(arr, arr)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "np_exp_out",
+"src": "import numpy as np\nnp.exp(arr, arr)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "meth_round_out",
+"src": "arr.round(0, arr)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "meth_clip_out",
+"src": "arr.clip(0, 1, arr)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "meth_cumsum_out",
+"src": "arr.cumsum(None, None, arr)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "meth_sum_out",
+"src": "arr.sum(None, None, o0)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "np_seed",
+"src": "import numpy as np\nnp.random.seed(0)",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "py_seed",
+"src": "import random\nrandom.seed(1)",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "ax_plot_outside",
+"src": "ax.plot([1, 2, 3])",
+"want": "accept",
+"names": [
+"ax"
+],
+"control": false
+},
+{
+"name": "ax_text_outside",
+"src": "ax.text(0, 0, \"x\")",
+"want": "accept",
+"names": [
+"ax"
+],
+"control": false
+},
+{
+"name": "plt_figure_new",
+"src": "import matplotlib.pyplot as plt\nplt.figure()",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "plt_figure_num",
+"src": "import matplotlib.pyplot as plt\nplt.figure(7)",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "pow_var",
+"src": "n = 10**8\nx = 7**n",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "pow_builtin",
+"src": "pow(3, 10**9)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "factorial_1e6",
+"src": "import math\nmath.factorial(10**6)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "iter_int_list",
+"src": "list(iter(int, 1))",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "iter_int_sum",
+"src": "sum(iter(int, 1))",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "ones_1e4sq",
+"src": "import numpy as np\nnp.ones((10000, 10000))",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "arange_step",
+"src": "import numpy as np\nnp.arange(0, 9999, 0.0001)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "outer_1e4",
+"src": "import numpy as np\nnp.outer(np.arange(9999), np.arange(9999))",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "tile_1e4",
+"src": "import numpy as np\nnp.tile(np.arange(9999), 9999)",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "list_times_times",
+"src": "[0] * 9999 * 9999",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "str_times_times",
+"src": "\"a\" * 9999 * 9999",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "ljust_big",
+"src": "\"x\".ljust(10**9)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "bytes_big",
+"src": "bytes(10**9)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "lshift_big",
+"src": "1 << 10**9",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "svd_1e4",
+"src": "import numpy as np\nnp.linalg.svd(np.random.rand(9999, 9999))",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "inv_5000",
+"src": "import numpy as np\nnp.linalg.inv(np.random.rand(5000, 5000))",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "decimal_int",
+"src": "import decimal\nint(decimal.Decimal(\"1e99999999\"))",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "permutations13",
+"src": "import itertools\nlist(itertools.permutations(range(13)))",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "product_1e4",
+"src": "import itertools\nlist(itertools.product(range(9999), range(9999)))",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "while_bare_except",
+"src": "while True:\n    try:\n        pass\n    except:\n        pass\n    if 0: break",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "while_true_inner_break",
+"src": "while True:\n    for i in range(1):\n        break",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "while_not_zero",
+"src": "while not 0:\n    pass",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "sleep_in_func_loop",
+"src": "import time\ndef f(): time.sleep(1)\nfor i in range(50): f()",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "date_range_s",
+"src": "import pandas as pd\npd.date_range(\"2000\", \"2020\", freq=\"s\")",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "big_figure",
+"src": "import matplotlib.pyplot as plt\nplt.figure(figsize=(1000, 1000), dpi=100)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "str_times_var",
+"src": "n = 10**9\n\"a\" * n",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "zeros_var",
+"src": "import numpy as np\nn = 10**10\nnp.zeros(n)",
+"want": "refuse",
+"names": [],
+"control": false
+},
+{
+"name": "rec_noBase",
+"src": "def f(): return f()\nf()",
+"want": "accept",
+"names": [],
+"control": false
+},
+{
+"name": "c_bitgen",
+"src": "import numpy as np\nnp.random.default_rng().bit_generator",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_np_lib",
+"src": "import numpy as np\nnp.lib.npyio",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_ctypeslib",
+"src": "import numpy as np\nnp.ctypeslib",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_testing",
+"src": "import numpy as np\nnp.testing",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_f2py",
+"src": "import numpy.f2py",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_get_backend",
+"src": "import matplotlib.pyplot as plt\nplt.get_backend()",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_switch_backend",
+"src": "import matplotlib.pyplot as plt\nplt.switch_backend(\"agg\")",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_rcsetup",
+"src": "import matplotlib.rcsetup",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_pd_io",
+"src": "import pandas as pd\npd.io",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_attrgetter",
+"src": "import operator\noperator.attrgetter(\"x\")",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_methodcaller",
+"src": "import operator\noperator.methodcaller(\"x\")",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_getcontext",
+"src": "import decimal\ndecimal.getcontext().prec = 10**9",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_len_open",
+"src": "len = open",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_print_os",
+"src": "import os\nprint = os.system",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_import_os_np",
+"src": "import os as np",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_from_np_os",
+"src": "from numpy import random as os",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_np_rebind",
+"src": "import numpy as np\nnp = 3",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_flat_set",
+"src": "arr.flat[0] = 1",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_real_set",
+"src": "arr.real = 1",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_setflags",
+"src": "arr.setflags(write=False)",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_ravel_write",
+"src": "v = arr.ravel()\nv[0] = 1",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_asarray_write",
+"src": "import numpy as np\nv = np.asarray(arr)\nv[0] = 1",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_arr_sort",
+"src": "arr.sort()",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_put",
+"src": "arr.put([0], [1])",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_df_loc",
+"src": "df.loc[0, \"a\"] = 1",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_df_eval",
+"src": "df.eval(\"a = 1\", inplace=True)",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_copyto",
+"src": "import numpy as np\nnp.copyto(arr, 1)",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_shuffle",
+"src": "import numpy as np\nnp.random.shuffle(arr)",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_fillna_inplace",
+"src": "df.fillna(0, inplace=True)",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_sortvalues_inplace",
+"src": "df.sort_values(\"a\", inplace=True)",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_fmt_dunder",
+"src": "\"{0.__class__}\".format(1)",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_fstr_dunder",
+"src": "f\"{spy.__class__}\"",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_outside_aug",
+"src": "lst += [1]",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_outside_call",
+"src": "fn()",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_global",
+"src": "global x\nx = 1",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_lambda_call_outside",
+"src": "g = lambda: lst\ng().append(1)",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_func_arg_launder",
+"src": "def f(p): return p\nf(lst).append(1)",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_walrus_comp",
+"src": "[(y := o) for o in lst]\ny.append(1)",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_match",
+"src": "match 1:\n    case 1: pass",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_with",
+"src": "with spy: pass",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_nonlocal",
+"src": "def f():\n    nonlocal z\n",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_decorator",
+"src": "@fn\ndef f(): pass",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_star_call",
+"src": "print(*lst)",
+"want": "refuse",
+"names": [],
+"control": true
+},
+{
+"name": "c_print_file",
+"src": "print(1, file=spy)",
+"want": "refuse",
+"names": [],
+"control": true
+}
+]
