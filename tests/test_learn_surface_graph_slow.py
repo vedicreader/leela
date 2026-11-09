@@ -101,7 +101,7 @@ def test_graph_layouts_keys_find_drag_divider_theme_and_click(tmp_path, monkeypa
         await pg.locator('#agentprompt').focus(); await pg.keyboard.press('Digit3'); await pg.wait_for_timeout(700)
         assert await pg.evaluate(MODE) == 'force' and await pg.locator('#agentprompt').input_value() == '3'
         await pg.locator('#agentprompt').fill('')
-        await pg.locator('.abh .lee-learn-find, .lee-learn-bar [data-learn-home]').first.focus(); await pg.keyboard.press('Digit2'); await pg.wait_for_timeout(700)
+        await pg.locator('#modebar [data-learn-home]').first.focus(); await pg.keyboard.press('Digit2'); await pg.wait_for_timeout(700)
         assert await pg.evaluate(MODE) == 'force'
 
         await _still(pg); await pg.wait_for_timeout(600); before = await pg.evaluate(PIX)

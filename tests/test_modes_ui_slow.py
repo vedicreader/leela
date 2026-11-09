@@ -102,3 +102,50 @@ def test_the_bar_is_one_row_and_the_narrow_bar_folds_into_a_menu(tmp_path, monke
         hit = await pg.evaluate("() => { const g = ['.restore-left', '.restore-bottom'].map(s => document.querySelector(s)); return g.map(e => getComputedStyle(e).display) }")
         assert hit == ['none', 'none'], hit
     _run(tmp_path, scenario, dict(width=1500, height=900))
+
+
+def test_keys_search_toasts_and_the_reserved_strip_in_the_learn_tab(tmp_path, monkeypatch):
+    pytest.importorskip('playwright.async_api')
+    lr, jid, slug = _env(tmp_path, monkeypatch)
+    async def scenario(pg, ws, port):
+        ws.open_walk('workspace', jid, 0); ws.save(); await pg.evaluate('mountTab()')
+        await pg.locator('.abh #check .check').wait_for(timeout=30000); await pg.wait_for_timeout(800)
+        assert await pg.evaluate("getComputedStyle(document.querySelector('.lee-learn-tab')).getPropertyValue('--learn-bottom').trim()") in ('0px', '')
+        await pg.evaluate("() => { document.activeElement.blur?.(); window.hints = 0; document.querySelector('#hint').addEventListener('click', () => window.hints++) }")
+        tabs = await pg.locator('.lee-tab').count()
+        await pg.evaluate("() => document.body.focus()")
+        await pg.keyboard.press('Alt+KeyW'); await pg.wait_for_timeout(500)
+        assert await pg.evaluate('window.hints') == 1
+        assert await pg.locator('.lee-tab').count() == tabs and ws.tab.kind == 'learn'
+        await pg.evaluate("() => leeLearnOpen('/')"); await pg.locator('.abh main').first.wait_for(); await pg.wait_for_timeout(800)
+        tabs = await pg.locator('.lee-tab').count()
+        await pg.keyboard.press('Alt+KeyW'); await pg.wait_for_timeout(500)
+        assert await pg.locator('.lee-tab').count() == tabs and ws.tab.kind == 'learn'
+        assert await pg.evaluate("getComputedStyle(document.querySelector('.abh .kf-pill')).display") == 'none'
+        was = await pg.evaluate("!document.querySelector('#kf-panel').hidden")
+        await pg.locator('[data-learn-keys]').click(); await pg.wait_for_timeout(300)
+        assert await pg.evaluate("!document.querySelector('#kf-panel').hidden") != was
+        await pg.keyboard.press('Escape')
+        await pg.locator('.lee-learn-find input').fill('fractions')
+        await pg.evaluate("leeLearnNav('/graph')"); await pg.locator('.abh #graph canvas').wait_for(timeout=30000); await pg.wait_for_timeout(500)
+        assert await pg.locator('.lee-learn-find input').input_value() == ''
+        css = (await pg.evaluate("fetch('/learn/abh-surface?path=/t/x').then(r => r.json())"))['css']
+        await pg.evaluate("u => new Promise(ok => document.head.append(Object.assign(document.createElement('link'), {rel: 'stylesheet', href: u, onload: ok})))", [u for u in css if 'learn-talk' in u][0])
+        await pg.evaluate("document.querySelector('.abh').classList.add('lee-presenting'); document.querySelector('.abh').insertAdjacentHTML('beforeend', '<div class=undo-bar>Added a slide.</div>')")
+        assert await pg.evaluate("getComputedStyle(document.querySelector('.abh .undo-bar')).display") == 'none'
+    _run(tmp_path, scenario, dict(width=1500, height=900))
+
+
+def test_the_bar_holds_one_row_at_1100(tmp_path, monkeypatch):
+    pytest.importorskip('playwright.async_api')
+    lr, jid, slug = _env(tmp_path, monkeypatch)
+    async def scenario(pg, ws, port):
+        ws.open_walk('workspace', jid, 0); ws.save(); await pg.evaluate('mountTab()')
+        await pg.locator('.abh #check .check').wait_for(timeout=30000)
+        for w in (1100, 860):
+            await pg.set_viewport_size(dict(width=w, height=700)); await pg.wait_for_timeout(600)
+            bar = await pg.evaluate(BAR)
+            assert bar['rows'] and bar['inside'] and bar['h'] < 45 and bar['more'], (w, bar)
+            assert await pg.evaluate("() => document.querySelector('#header').getBoundingClientRect().height") < 45
+            await pg.screenshot(path=f'{OUT}/m2-learn-{w}.png')
+    _run(tmp_path, scenario, dict(width=1500, height=900))

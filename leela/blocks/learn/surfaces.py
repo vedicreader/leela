@@ -5,7 +5,7 @@ import hashlib, re
 from importlib.resources import files
 from pathlib import Path
 
-ALWAYS = dict(css=[], js=['voice.js'], rerun=[], files=['vad.js'])
+ALWAYS = dict(css=['keys_float.css'], js=['voice.js', 'keys_float.js'], rerun=[], files=['vad.js'])
 SURFACES = [
     (r'^/[wc]/', dict(css=[], js=['detour.js'], rerun=[])),
     (r'^/dictate$', dict(js=['dictate.js'])),

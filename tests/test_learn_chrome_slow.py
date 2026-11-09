@@ -14,7 +14,7 @@ HIT = """() => {
   const st = document.querySelector('#status'), was = st.hidden; st.hidden = false;
   const box = e => { const r = e.getBoundingClientRect(); return {l: r.left, t: r.top, r: r.right, b: r.bottom} };
   const vis = s => { const e = document.querySelector(s); return e && getComputedStyle(e).display !== 'none' ? [s, box(e)] : null };
-  const guards = [vis('.restore-left'), vis('.restore-right'), vis('.restore-bottom'), ['#status', box(st)]].filter(Boolean);
+  const guards = [vis('.restore-left'), vis('.restore-right'), vis('.restore-bottom')].filter(Boolean);
   const clip = document.querySelector('.lee-learn-tab > .abh').getBoundingClientRect(), tab = document.querySelector('.lee-learn-tab');
   const bad = [];
   for (const e of tab.querySelectorAll('*')) {

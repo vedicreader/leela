@@ -380,6 +380,7 @@ body {
   scrollbar-width: none;
 }
 .lee-modeswitch { flex: none; margin: 0 2px; }
+.lee-header .lee-pill { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; max-width: 22ch; }
 .lee-modebar { display: none; }
 .lee-app[data-mode=learn] #toolbar > :not(.lee-modebar) { display: none; }
 .lee-app[data-mode=learn] .lee-modebar { display: flex; flex: 1 1 auto; min-width: 0; align-items: center; flex-wrap: nowrap; gap: 6px; overflow: hidden; }
@@ -392,7 +393,8 @@ body {
 @media (max-width: 1180px) {
   .lee-modebar .lee-learn-more { display: inline-block; margin-left: auto; }
   .lee-modebar .lee-learn-nav > :not([data-learn-home]), .lee-modebar .lee-learn-chips, .lee-modebar .lee-learn-find,
-  .lee-modebar [data-learn-fit], .lee-modebar [data-learn-change] { display: none; }
+  .lee-modebar [data-learn-fit], .lee-modebar [data-learn-change], .lee-modebar [data-learn-keys] { display: none; }
+  .lee-app[data-mode=learn] .lee-git-quickbar, .lee-app[data-mode=learn] .lee-branch-switcher, .lee-app[data-mode=learn] .lee-tab-overflow:not(#taboverflow) { display: none; }
 }
 .lee-toolbar-hint { margin-left: 6px; color: var(--lee-fg4); font-size: 10.5px; }
 .lee-toolbar-more { width: 28px; }

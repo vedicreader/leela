@@ -102,7 +102,7 @@ def test_step_shows_source_note_talk_keys_and_feedback(tmp_path, monkeypatch):
         await abh.locator('.src-open').click()
         got = await pg.evaluate('window.__vault')
         assert got[1:3] == ['', 'learn'] and got[0] and len(pg.context.pages) == pages
-        pill = abh.locator('.kf-pill')
+        pill = pg.locator('#modebar [data-learn-keys]')
         await pill.wait_for(timeout=10000)
         await pill.click()
         assert await abh.locator('.kf-panel').is_visible()

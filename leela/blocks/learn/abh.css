@@ -27,3 +27,4 @@ a.lee-learn-chip:hover { color: var(--lee-fg); border-color: var(--lee-accent); 
 .abh .modes-pick label:has(input:focus-visible) { outline: 2px solid var(--acc); outline-offset: 2px; }
 .abh .modes-pick input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .abh .modes-pick { display: flex; gap: var(--s2, 6px); margin: var(--s3, 10px) calc(-1 * var(--s3, 10px)) 0; }
+.abh .kf-pill { display: none; }
