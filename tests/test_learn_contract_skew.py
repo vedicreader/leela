@@ -71,6 +71,6 @@ def test_leela_and_its_other_features_still_work(cl, skew):
 
 def test_a_current_abhyasa_has_no_line_and_gets_its_section(ws, monkeypatch):
     for n in ('DEFAULT_SETTINGS', '_ENUMS', '_RANGES', 'USER_ONLY', 'SECTIONS'): monkeypatch.setattr(S, n, deepcopy(getattr(S, n)))
-    S.SECTIONS.pop('learn', None)
+    for n in ('DEFAULT_SETTINGS', '_ENUMS', '_RANGES', 'USER_ONLY', 'SECTIONS'): getattr(S, n).pop('learn', None)   # an earlier test in this process may have built the app
     assert host_line() == '' and contract_missing() == []
     assert ide_app(ws) and 'learn' in S.SECTIONS
