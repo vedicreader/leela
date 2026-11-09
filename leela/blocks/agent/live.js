@@ -560,6 +560,7 @@ function paintAgentThreads(d) {
   const gone = !lee.agentThread || (d.live && !d.live.includes(lee.agentThread));
   lee.agentThreadRows = rows; if (gone) lee.agentThread = d.active || '';
   if (d.learn_modes && lee.agentThread in d.learn_modes) lee.agentLearnMode = d.learn_modes[lee.agentThread];
+  if (d.learn_missing) lee.agentLearnMissing = d.learn_missing;
   paintAgentLearn(rows.find(t => t.id === lee.agentThread));
   const count = $('#agentthreadcount'); if (count) count.textContent = String(rows.length);
   const waiting = (d.attention?.waiting || []).length, unread = d.attention?.unread || 0;
@@ -966,9 +967,11 @@ function paintAgentLearn(thread) {
   }
   if (thread) lee.agentLearnMode = !!thread.learn_mode;
   const busy = thread ? thread.state === 'working' || thread.state === 'waiting' : !!lee.agentBusy;
-  button.disabled = busy; button.textContent = busy ? 'Learn: busy' : `Learn: ${lee.agentLearnMode ? 'on' : 'off'}`;
+  const missing = !lee.agentLearnMode && lee.agentLearnMissing?.length ? lee.agentLearnMissing : null;
+  button.disabled = busy || !!missing; button.textContent = busy ? 'Learn: busy' : `Learn: ${lee.agentLearnMode ? 'on' : 'off'}`;
   button.setAttribute('aria-pressed', String(!!lee.agentLearnMode));
-  button.title = busy ? 'Wait for the turn, queue and approval to finish.' : 'Change learning tools in this conversation';
+  button.title = busy ? 'Wait for the turn, queue and approval to finish.'
+    : missing ? `Learn needs a newer Abhyasa: this install lacks ${missing.join(', ')}.` : 'Change learning tools in this conversation';
 }
 async function leeAgentLearnToggle() {
   try {
