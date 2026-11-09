@@ -3,18 +3,19 @@ from pathlib import Path
 from urllib.parse import quote
 from starlette.responses import JSONResponse, PlainTextResponse
 from starlette.routing import Match, Mount, Route
-from ... import errstr
+from ... import errstr, leela_cfg
 from ...core.web import fail, off_loop
 from ...hub import LOOPBACK
 from ..memory.vaults import LEARN
 from .speech import make_transcribe, speech_values
 from .tools import learn_ask, learn_settings, learn_store, learn_vision, learn_vision_why, run_gather
 
-__all__ = ['BASE', 'HOSTS', 'Hosted', 'Prefixed', 'Shared', 'abhyasa_app', 'host_ask', 'learn_key', 'mount_abhyasa', 'shared', 'using']
+__all__ = ['BASE', 'HOSTS', 'Hosted', 'Prefixed', 'STATE', 'Shared', 'abhyasa_app', 'host_ask', 'learn_key', 'mount_abhyasa', 'shared', 'using']
 
 HOSTS = (*LOOPBACK, '.localhost')   # `LoopbackHostGuard`'s rule: loopback, and any `<slug>.localhost`
 LEFT_OUT = ('build', 'guide')
 BASE = '/learn/abh'
+STATE = 'learn-abhyasa'   # Abhyasa's own files, kept in Leela's config folder
 METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
 _ws = contextvars.ContextVar('learn_ws', default=None)
 
@@ -59,7 +60,7 @@ def abhyasa_app(ws, ai=None, hosts=None):
     from abhyasa.app import mk_app
     from abhyasa.blocks import NAMES
     _, lr = learn_store(ws)
-    return mk_app(lr, host_ask(ai or _Live()), transcribe=make_transcribe(ws.jobs, lambda: ws.project_root), names=[n for n in NAMES if n not in LEFT_OUT], warm_speech=False, hosts=hosts or HOSTS)
+    return mk_app(lr, host_ask(ai or _Live()), transcribe=make_transcribe(ws.jobs, lambda: ws.project_root), names=[n for n in NAMES if n not in LEFT_OUT], warm_speech=False, hosts=hosts or HOSTS, config=leela_cfg/STATE)
 
 
 class Shared:

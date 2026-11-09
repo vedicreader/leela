@@ -2,7 +2,7 @@ import asyncio, json, os, threading
 from functools import partial
 from fastcore.basics import first
 from starlette.responses import JSONResponse, Response, StreamingResponse
-from ... import errstr
+from ... import errstr, leela_cfg
 
 __all__ = ['ROWS', 'speech_rows', 'speech_values', 'blocker', 'download', 'make_transcribe', 'connect']
 
@@ -66,10 +66,12 @@ def make_transcribe(jobs, root=lambda: None):
     "Leela's one speech to text: engine and model from Leela's settings, the key from Leela's Environment, Abhyasa's one resident model."
     def transcribe(audio, hint=''):
         from abhyasa import models
+        from abhyasa.learner import use_config
         v = speech_values(root())
         if why := blocker(jobs, v): raise RuntimeError(why)
         engine, model = models.resolve(v['stt.engine'], v['stt.model'])
-        try: return models.transcribe(audio, engine, hint, model)
+        try:
+            with use_config(leela_cfg/'learn-abhyasa'): return models.transcribe(audio, engine, hint, model)   # no key file of Abhyasa is read
         except ModuleNotFoundError as e: raise RuntimeError(f'Speech on this Mac needs the {e.name} package. Install leela[local], or choose the openai engine.') from e
     return transcribe
 
