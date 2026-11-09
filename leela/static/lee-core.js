@@ -3850,6 +3850,8 @@ async function pickNotebookLanguage() {
  * The text changes at once. A cell that is safe to run over and over (`scrub_ok`, nb/scrub.py) re-runs at most every
  * 150 ms; the output it had before stays beside the new one as a ghost until the next ordinary run. */
 const leeScrubPx = 4, leeScrubGap = 150, leeScrubLimit = 1000, leeScrubIdle = 700;
+//: Off until the checker passes its corpus: a scrub changes the number and never re-runs the cell.
+const leeScrubLive = false;
 const leeScrubS = {drag: null, key: null, mouse: null, hint: null};
 
 //: Every number in `text` that a drag may change: not in a string or comment, not part of a name, not `1e5`, `0x1f`, `1_000` or `2j`.
@@ -3973,7 +3975,7 @@ function leeScrubOpen(view, id) {
   lee.scrubbing = true; leeScrubClear(id);
   s.gate = leeScrubGate(v => leeScrubRun(s));
   s.check = post('/nb/scrub/check', {source: view.state.doc.toString()}).then(r => {
-    s.ok = !!r.ok; if (!r.ok) leeScrubNote(id, `Not re-running while you scrub: ${r.reason}. Run the cell yourself.`);
+    s.ok = leeScrubLive && !!r.ok; if (!leeScrubLive) return; if (!r.ok) leeScrubNote(id, `Not re-running while you scrub: ${r.reason}. Run the cell yourself.`);
     if (s.ok && s.want) s.gate.push(1);
   }).catch(e => leeScrubNote(id, `Not re-running while you scrub: ${e.message || e}`));
   return s;
