@@ -1,1 +1,3 @@
-.lee-present { position: fixed; inset: 0; width: 100%; height: 100%; border: 0; z-index: 3000; background: var(--lee-bg); }
+.abh.lee-presenting { overflow: hidden; }
+.abh .lee-present { position: fixed; inset: 0; z-index: 3; overflow: auto; background: var(--page); color: var(--fg); outline: 0; }
+.abh .lee-present > .pv { box-sizing: border-box; min-height: 100%; padding: 16px 24px; }
