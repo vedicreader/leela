@@ -322,7 +322,9 @@ JSON for the UI:
 - `GET /agent/threads` adds `modes` (`{thread: mode}`) and `mode` (the workspace mode). It keeps `learn_modes` (`{thread: bool}`). Each thread row has `mode` and `learn_mode`.
 - The agent feed emits `mode {mode}` and, for the old page code, `learn_mode {on}`.
 
-Deferred: the title-bar switch and the mode bar (JS), the palette commands `Mode: Code` and `Mode: Learn`, the `Learn about this` command, the first-run offer, per-mode key sets, and a `create` mode.
+First run: with no tab open, the page offers three choices: Open a folder, Learn something (`leeFirstLearn`: `POST /workspace/mode {mode: 'learn'}`, then the Learn tab, then focus on the Start box) and Write or run code. A line points to the top-bar switch.
+
+Deferred: the title-bar switch and the mode bar (JS), the palette commands `Mode: Code` and `Mode: Learn`, the `Learn about this` command, per-mode key sets, and a `create` mode.
 
 ## Hosted route audit
 

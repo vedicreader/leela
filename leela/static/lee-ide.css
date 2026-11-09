@@ -1550,6 +1550,10 @@ html.lee-learn-page { height:100%; overflow-y:auto; } html.lee-learn-page > body
 .lee-agent-welcome { font-family: var(--lee-sans); display: grid; gap: 9px; max-width: 34rem; margin: 22px auto; padding: 16px; border-left: 2px solid var(--lee-aqua); background: color-mix(in srgb, var(--lee-aqua) 4%, var(--lee-bg)); }
 .lee-agent-welcome strong { color: var(--lee-fg); font-size: 12px; letter-spacing: -.01em; }.lee-agent-welcome span { max-width: 46ch; color: var(--lee-fg4); font-size: 10.5px; line-height: 1.55; }
 .lee-agent-welcome .lee-btn { justify-self: start; margin-top: 2px; }
+.lee-agent-mode { color: var(--lee-fg3); font: var(--lee-size-min)/1.4 var(--lee-mono); padding: 0 6px; align-self: center; }
+.lee-agent-starters { display: grid; gap: 8px; max-width: 34rem; margin: 22px auto; padding: 0 16px; justify-items: start; }
+.lee-agentlog:has(.lee-agent-turn) .lee-agent-starters { display: none; }
+.lee-agent-welcome[hidden] { display: none; }
 .lee-provider-list { margin: 0; padding-left: 14px; color: var(--lee-fg4); font-size: 10.5px; line-height: 1.6; }
 .lee-compaction-event { margin: 5px 0; border-top: 1px solid var(--lee-aqua); border-bottom: 1px solid var(--lee-border); background: color-mix(in srgb, var(--lee-aqua) 4%, transparent); }
 .lee-compaction-event summary { padding: 7px 9px; color: var(--lee-aqua); cursor: pointer; font: var(--lee-size-min)/1.35 var(--lee-mono); }
@@ -4089,3 +4093,16 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
   --lee-green: #0a3069; --lee-purple: #0550ae; --lee-blue: #8250df; --lee-yellow: #953800;
 }
 
+
+.lee-first { align-items: stretch; width: min(640px, calc(100% - 40px)); }
+.lee-first > h2 { font-family: var(--lee-serif); font-size: 30px; font-weight: 500; letter-spacing: -.01em; max-width: none; margin: 0 0 20px; }
+.lee-first-ways { display: grid; gap: 10px; }
+.lee-first-way { display: grid; gap: 4px; text-align: left; padding: 16px 18px; border-radius: 10px; cursor: pointer; font: inherit;
+  color: var(--lee-fg); background: var(--lee-bg1); border: 1px solid var(--lee-border); }
+.lee-first-way:hover, .lee-first-way:focus-visible { border-color: var(--lee-accent); background: var(--lee-bg2); }
+.lee-first-way strong { font-size: 17px; font-weight: 600; }
+.lee-first-way span { font-size: 14px; line-height: 1.45; color: var(--lee-fg4); }
+.lee-first-way.go { border-color: var(--lee-accent); }
+.lee-first-note { margin: 18px 0 0; font-size: 14px; color: var(--lee-fg4); }
+.lee-first .lee-empty-recent { margin: 22px 0 0; max-width: none; }
+.lee-first > .lee-empty-mark { align-self: flex-start; }

@@ -430,37 +430,20 @@ def _vars_panel(ws):
         cls='lee-panel lee-varspanel')
 
 def _empty_editor():
-    "First paint with no tab: brand + one path into each main surface."
-    features = (
-        ('Notebooks and files', 'Edit files and run notebook cells. Each script runs in its own kernel.'),
-        ('Live variables', 'See the values in your kernel while cells run. Open a value to see what is in it.'),
-        ('Research and memory', 'Keep the pages and papers you read in your library. Leela looks there before it goes to the web again.'),
-        ('Code search', 'Find code by name, by words or by meaning. See which function calls which.'),
-        ('Agent', 'The agent sees your code, your open files and your variables. It uses a local model or a cloud model.'),
-        ('Git, release and deploy', 'Commit, release and deploy from the side panes.'),
-    )
+    "First paint with no tab: three plain choices, the way back to recent work, and the mode switch."
+    ways = (('Open a folder', 'Pick a project on this computer. Its files, notebooks and git history open here.', 'go', 'leeAct("add_root")', 'first-open'),
+            ('Learn something', 'Name a topic. Leela builds a short lesson and checks what you understood.', '', 'leeFirstLearn()', 'first-learn'),
+            ('Write or run code', 'Start a notebook and run it cell by cell. The agent reads it with you.', '', 'leeAct("new_notebook")', 'first-code'))
     return Section(
         Span('leela', cls='lee-empty-mark', aria_hidden='true'),
-        H2('Code, notebooks and research'),
-        P('Edit files, run notebooks, keep what you read, and ask an agent that sees your work.'),
-        # Actions before the tour: reopening a project should not mean reading past it.
-        Div(Button('Open a folder', cls='lee-btn go', onclick='leeAct("add_root")'),
-            Button('Open…', cls='lee-btn', onclick='leeAct("open_folder")'),
-            Button('Go to file…', cls='lee-btn', onclick='leeAct("quick_open")'),
-            Button('New notebook', cls='lee-btn', onclick='leeAct("new_notebook")'),
-            Button('Open the vault', cls='lee-btn', onclick='leeVaultWorkbench()'),
-            Button('Research a topic', cls='lee-btn', onclick='leeAct("research")'),
-            Button('Ask the agent', cls='lee-btn', onclick='leeAct("focus_agent")'),
-            cls='lee-empty-actions'),
-        # Filled by the client from `/fs/recent`: live, because a packaged shell is built once.
+        H2('What do you want to do?'),
+        Div(*[Button(Strong(t), Span(d), cls='lee-first-way ' + c, id=i, onclick=o) for t, d, c, o, i in ways], cls='lee-first-ways'),
         Div(id='leerecent', cls='lee-empty-recent', hidden=True),
-        # And from `/agent/setup`, which answers with nothing outside a packaged app: a virtualenv
-        # install chose its own dependencies already.
         Div(id='leesetup', cls='lee-empty-setup', hidden=True),
-        Ul(*[Li(Strong(title), Span(blurb)) for title, blurb in features], cls='lee-empty-features'),
+        P('Switch between Code and Learn any time from the top bar.', cls='lee-first-note'),
         Small('Keys: ', Kbd('mod+o'), ' open a folder · ', Kbd('mod+p'), ' go to a file · ', Kbd('mod+shift+p'), ' commands · ',
               Kbd('mod+e'), ' recent files'),
-        cls='lee-empty')
+        cls='lee-empty lee-first')
 
 def _editor_pane(ws):
     "Primary editor plus an optional client-mounted second pane."
@@ -626,9 +609,9 @@ def _agent_panel(ws):
     notice = (Strong(f'{agent_model} cannot run here'), Span(gone, data_unavailable='1'), *guide) if gone else (
         (Span(*_ticks(moved), data_moved='1'),) if moved else ())
     setup = () if has_state or not ws.project_root else (
-        Strong('Set up this workspace agent'),
-        Span('Create a reviewed charter from this codebase. Leela remembers it and can refresh it as the project changes.'),
-        Button('Set up agent state', cls='lee-btn go', type='button', onclick='leeAgentState()'))
+        Strong('Set up this workspace agent', data_setup='1'),
+        Span('Create a reviewed charter from this codebase. Leela remembers it and can refresh it as the project changes.', data_setup='1'),
+        Button('Set up agent state', cls='lee-btn go', type='button', onclick='leeAgentState()', data_setup='1'))
     welcome = Div(*notice, *setup, cls='lee-agent-welcome', role='status' if notice else None) if notice or setup else None
     return Section(
         Div(Div(Span('agent', cls='lee-ptitle'),
