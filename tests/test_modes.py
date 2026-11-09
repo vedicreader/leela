@@ -198,6 +198,20 @@ def test_focus_learn_has_one_tab_at_its_last_path_and_code_returns_to_the_last_e
     assert [t.kind for t in ws.tabs].count('learn') == 1
 
 
+def test_code_with_only_the_learn_tab_has_no_active_tab_and_a_restore_keeps_it_so(home, tmp_path):
+    ws = home
+    ws.set_mode('learn')
+    assert [t.kind for t in ws.tabs] == ['learn'] and ws.tab.kind == 'learn'
+    assert ws.set_mode('code')['focus'] == dict(kind='', path='') and ws.tab is None and ws.mode == 'code'
+    assert ws.cycle(1).kind == 'learn' and ws.close() is not None and ws.tab is None
+    ws.set_mode('learn'); ws.mode = 'code'; ws.active = 0
+    ws._settle_mode()
+    assert ws.tab is None
+    ws.set_mode('learn'); (ws.fs.roots[0]/'a.py').write_text('x = 1\n'); a = ws.open(str(ws.fs.roots[0]/'a.py'))
+    ws.mode = 'code'; ws.activate(ws.tabs.index(ws.tabs.filter(lambda t: t.kind == 'learn')[0])); ws._settle_mode()
+    assert ws.tab is a
+
+
 def _nb(tmp_path):
     nb = {'cells': [
         {'cell_type': 'code', 'id': 'c1', 'metadata': {}, 'execution_count': 1, 'source': 'print("hi")', 'outputs': [{'output_type': 'stream', 'name': 'stdout', 'text': 'hi\n' * 3000}]},

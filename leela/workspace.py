@@ -565,7 +565,7 @@ class Workspace:
         self.fs_watch.start(restart=True)
         return r
     @property
-    def tab(self): return self.tabs[self.active] if self.tabs else None
+    def tab(self): return self.tabs[self.active] if 0 <= self.active < len(self.tabs) else None
     def note_cell(self, cell):
         "Remember the cell the active notebook tab points at; the agent's turn context anchors on it."
         t = self.tab
@@ -584,6 +584,14 @@ class Workspace:
         self.mode_layouts[mode] = {**self.mode_layouts.get(mode, {}), **kept}
         return self.mode_layout(mode)
     def _mode_key(self, t): return t.path or t.ref or t.title
+    def _code_tab(self):
+        "The index of the editor tab Code shows: the last one it had, else the newest; None when only Learn tabs are open."
+        want = self.mode_focus.get('code', '')
+        i = first(i for i, t in enumerate(self.tabs) if t.kind != 'learn' and self._mode_key(t) == want)
+        return first((i for i in reversed(range(len(self.tabs))) if self.tabs[i].kind != 'learn'), None) if i is None else i
+    def _settle_mode(self):
+        "After a restore Code never shows the Learn tab: it shows its editor tab, or the empty page."
+        if self.mode == 'code' and (t := self.tab) is not None and t.kind == 'learn': self.active = ifnone(self._code_tab(), -1)
     def set_mode(self, mode):
         "Switch the workspace mode; nothing closes. Returns the mode, its layout and the tab to focus."
         from .blocks.modes.modes import get_mode
@@ -596,8 +604,8 @@ class Workspace:
             focus = dict(kind='learn', path=tab.page)
         else:
             want = self.mode_focus.get('code', '')
-            i = first(i for i, t in enumerate(self.tabs) if t.kind != 'learn' and self._mode_key(t) == want)
-            if i is None: i = first((i for i in reversed(range(len(self.tabs))) if self.tabs[i].kind != 'learn'), None)
+            i = self._code_tab()
+            if i is None: self.active = -1; self.watch_env(None)
             tab = self.activate(i) if i is not None else None
             focus = dict(kind=tab.kind, path=tab.path) if tab is not None else dict(kind='', path='')
         self.save()
@@ -744,7 +752,7 @@ class Workspace:
         t = self.tabs.pop(i)
         self.offers.pop(t.path, None); self.offer_also.pop(t.path, None)
         if t.path and self.fs.admitted: self.fs.revoke(t.path)
-        self.active = max(0, min(self.active if i > self.active else self.active-1, len(self.tabs)-1))
+        if self.active >= 0: self.active = max(0, min(self.active if i > self.active else self.active-1, len(self.tabs)-1))
         self.watch_env(None)
         return t
     def release(self, path):
@@ -1569,6 +1577,7 @@ class Workspace:
             was = saved[min(max(active, 0), len(saved) - 1)] or {}
             self.active = ifnone(first(i for i, t in enumerate(self.tabs)
                                        if (t.kind == 'learn' and was.get('kind') in ('learn_walk', 'learn')) or (t.path and t.path == str(was.get('path') or ''))), 0)
+            self._settle_mode()
         return opened
     def _merge_roots(self, held, mine):
         "Folders the saved session should hold: what this window did not close, then what this window has."
@@ -1646,6 +1655,7 @@ class Workspace:
                 tab.cwd = str(t.get('cwd') or '')
             except Exception: pass
         ws.active = min(active, max(0, len(ws.tabs)-1))
+        ws._settle_mode()
         ws.active_root = None
         if saved_root := str(d.get('active_root') or ''):
             try: ws.activate_root(saved_root)

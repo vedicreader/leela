@@ -316,12 +316,13 @@ def _mode_switch(ws):
                id='modeswitch', cls='lee-segbar lee-modeswitch', role='group', aria_label='Mode', title='Code or Learn: each keeps its own layout')
 
 def _mode_attrs(ws):
-    "What the shell carries so the first paint already has the mode's docks: no flicker, no script needed."
+    "What the shell carries so the first paint already has the mode's docks: no flicker, no script needed. Code is painted from its docks once it has any saved."
     from .blocks.modes.modes import modes
-    l = ws.mode_layout(ws.mode)
-    cls = ' no-left' * (ws.mode != 'code' and not l['files']) + ' no-bottom' * (ws.mode != 'code' and not l['exec'])
+    l, kept = ws.mode_layout(ws.mode), ws.mode != 'code' or bool(ws.mode_layouts.get('code'))
+    cls = (' no-left' * (not l['files']) + ' no-bottom' * (not l['exec']) + ' no-right' * (not l['agent'])) if kept else ''
     at = dict(data_mode=ws.mode, data_layouts=json.dumps({m.id: ws.mode_layout(m.id) for m in modes()}))
-    return cls, ({**at, 'data_nohandle': '1'} if ws.mode != 'code' and not l['exec_handle'] else at)
+    if kept: at['data_kept'] = '1'
+    return cls, ({**at, 'data_nohandle': '1'} if kept and not l['exec_handle'] else at)
 
 def _git_panel():
     return Section(

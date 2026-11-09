@@ -396,6 +396,13 @@ body {
   .lee-modebar [data-learn-fit], .lee-modebar [data-learn-change], .lee-modebar [data-learn-keys] { display: none; }
   .lee-app[data-mode=learn] .lee-git-quickbar, .lee-app[data-mode=learn] .lee-branch-switcher, .lee-app[data-mode=learn] .lee-tab-overflow:not(#taboverflow) { display: none; }
 }
+.lee-workspace-switcher, .lee-header .lee-pill { flex-shrink: 1; }
+@media (max-width: 960px) {
+  .lee-workspace-switcher { max-width: 150px; }
+  .lee-branch-switcher { max-width: 110px; }
+  .lee-header .lee-git-quickbar, .lee-header > .lee-tab-overflow:not(#taboverflow) { display: none; }
+}
+@media (max-width: 800px) { #runspill, .lee-header .lee-branch-switcher { display: none; } .lee-header .lee-pill { max-width: 15ch; } }
 .lee-toolbar-hint { margin-left: 6px; color: var(--lee-fg4); font-size: 10.5px; }
 .lee-toolbar-more { width: 28px; }
 .lee-toolbar-link { border: 0; background: transparent; color: var(--lee-accent); cursor: pointer; padding: 2px 3px; font: 10.5px/1.4 var(--lee-mono); }

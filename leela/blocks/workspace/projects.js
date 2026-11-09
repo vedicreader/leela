@@ -156,9 +156,8 @@ window.leePaintRecent = paintRecent;
 
 // First-run "Learn something": switch the workspace to Learn mode, show its tab, then focus the Start box.
 async function firstLearn() {
-  try { await post('/workspace/mode', {mode: 'learn'}); }
+  try { if (!await leeModeSet('learn')) return; }
   catch (e) { return status(e.message || 'Learn did not open', 'err'); }
-  await refreshTabStrip(); await mountTab().catch(() => {});
   for (let i = 0; i < 100; i++) {
     const q = $('#start-q'); if (q) return q.focus();
     await new Promise(ok => setTimeout(ok, 100));

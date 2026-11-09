@@ -85,7 +85,7 @@ def test_the_bar_is_one_row_and_the_narrow_bar_folds_into_a_menu(tmp_path, monke
     pytest.importorskip('playwright.async_api')
     lr, jid, slug = _env(tmp_path, monkeypatch)
     async def scenario(pg, ws, port):
-        ws.open_walk('workspace', jid, 0); ws.save(); await pg.evaluate('mountTab()')
+        ws.open_walk('workspace', jid, 0); ws.save(); await pg.locator('#modeswitch [data-mode=learn]').click()
         await pg.locator('.abh #check .check').wait_for(timeout=30000); await pg.wait_for_timeout(800)
         wide = await pg.evaluate(BAR)
         assert wide['rows'] and wide['inside'] and wide['h'] < 45 and not wide['more'] and wide['lib'], wide
@@ -108,7 +108,7 @@ def test_keys_search_toasts_and_the_reserved_strip_in_the_learn_tab(tmp_path, mo
     pytest.importorskip('playwright.async_api')
     lr, jid, slug = _env(tmp_path, monkeypatch)
     async def scenario(pg, ws, port):
-        ws.open_walk('workspace', jid, 0); ws.save(); await pg.evaluate('mountTab()')
+        ws.open_walk('workspace', jid, 0); ws.save(); await pg.locator('#modeswitch [data-mode=learn]').click()
         await pg.locator('.abh #check .check').wait_for(timeout=30000); await pg.wait_for_timeout(800)
         assert await pg.evaluate("getComputedStyle(document.querySelector('.lee-learn-tab')).getPropertyValue('--learn-bottom').trim()") in ('0px', '')
         await pg.evaluate("() => { document.activeElement.blur?.(); window.hints = 0; document.querySelector('#hint').addEventListener('click', () => window.hints++) }")
@@ -140,7 +140,7 @@ def test_the_bar_holds_one_row_at_1100(tmp_path, monkeypatch):
     pytest.importorskip('playwright.async_api')
     lr, jid, slug = _env(tmp_path, monkeypatch)
     async def scenario(pg, ws, port):
-        ws.open_walk('workspace', jid, 0); ws.save(); await pg.evaluate('mountTab()')
+        ws.open_walk('workspace', jid, 0); ws.save(); await pg.locator('#modeswitch [data-mode=learn]').click()
         await pg.locator('.abh #check .check').wait_for(timeout=30000)
         for w in (1100, 860):
             await pg.set_viewport_size(dict(width=w, height=700)); await pg.wait_for_timeout(600)
@@ -148,4 +148,161 @@ def test_the_bar_holds_one_row_at_1100(tmp_path, monkeypatch):
             assert bar['rows'] and bar['inside'] and bar['h'] < 45 and bar['more'], (w, bar)
             assert await pg.evaluate("() => document.querySelector('#header').getBoundingClientRect().height") < 45
             await pg.screenshot(path=f'{OUT}/m2-learn-{w}.png')
+    _run(tmp_path, scenario, dict(width=1500, height=900))
+
+
+HEAD = """() => { const h = document.querySelector('#header'), hb = h.getBoundingClientRect(), vis = [...h.children].filter(e => e.offsetParent && e.getBoundingClientRect().width), r = vis.map(e => [e.id || e.className.toString().split(' ')[0], e.getBoundingClientRect()]);
+  return {h: hb.height, w: hb.width, vw: innerWidth, sw: document.documentElement.scrollWidth, rows: Math.max(...r.map(x => x[1].top)) < Math.min(...r.map(x => x[1].bottom)),
+    out: r.filter(x => x[1].right > innerWidth + 1 || x[1].left < -1).map(x => x[0]), cut: r.filter(x => x[0] !== 'tabbar' && x[1].right > hb.right + 1).map(x => x[0]),
+    kernel: !!document.querySelector('#header > .lee-pill:last-child') && document.querySelector('#header > .lee-pill:last-child').getBoundingClientRect().right <= innerWidth,
+    sw_text: document.querySelector('#modeswitch').getBoundingClientRect().width, names: r.map(x => x[0])} }"""
+
+
+def test_the_title_bar_holds_one_row_from_1100_to_720(tmp_path, monkeypatch):
+    pytest.importorskip('playwright.async_api')
+    lr, jid, slug = _env(tmp_path, monkeypatch)
+    async def scenario(pg, ws, port):
+        ws.open_walk('workspace', jid, 0); ws.save(); bad = []
+        for mode in ('code', 'learn'):
+            await pg.locator(f'#modeswitch [data-mode={mode}]').click(); await pg.wait_for_timeout(1000)
+            for w in (1100, 1000, 860, 720):
+                await pg.set_viewport_size(dict(width=w, height=800)); await pg.wait_for_timeout(500)
+                b = await pg.evaluate(HEAD)
+                bad.append((mode, w, b)) if not (b['h'] < 45 and b['rows'] and not b['out'] and not b['cut'] and b['kernel'] and b['sw'] <= w) else None
+                await pg.screenshot(path=f'{OUT}/v1-title-{mode}-{w}.png')
+        assert not bad, '\n'.join(map(str, bad))
+    _run(tmp_path, scenario, dict(width=1500, height=900))
+
+
+AGENT = "() => ({label: document.querySelector('#agentmode')?.textContent, setup: [...document.querySelectorAll('#agentlog [data-setup]')].filter(e => e.offsetParent).length, starters: [...document.querySelectorAll('#agentlog .lee-agent-starters button')].filter(e => e.offsetParent).length})"
+
+
+def test_the_agent_pane_follows_the_mode_both_ways_and_after_a_reload(tmp_path, monkeypatch):
+    pytest.importorskip('playwright.async_api')
+    lr, jid, slug = _env(tmp_path, monkeypatch)
+    async def scenario(pg, ws, port):
+        a = await pg.evaluate(AGENT)
+        assert a['label'] == 'Code' and a['setup'] == 3 and a['starters'] == 0, a
+        await pg.locator('#modeswitch [data-mode=learn]').click()
+        await pg.locator('.abh main').first.wait_for(timeout=30000)
+        await pg.wait_for_function("document.querySelector('#agentmode').textContent === 'Learn'")
+        a = await pg.evaluate(AGENT)
+        assert a['setup'] == 0 and a['starters'] == 3, a
+        assert ws.threads.active.ai.mode == 'learn' and ws.mode == 'learn'
+        for mode in ('light', 'dark'):
+            await pg.evaluate(f"applyTheme('leela:{mode}:relaxed')"); await pg.wait_for_timeout(300)
+            await pg.screenshot(path=f'{OUT}/v1-agent-learn-{mode}.png')
+        await pg.reload(wait_until='networkidle'); await pg.wait_for_function('window.lee && lee.keys.length')
+        await pg.evaluate("leeRight('agent')"); await pg.wait_for_function("document.querySelector('#agentmode')?.textContent === 'Learn'")
+        a = await pg.evaluate(AGENT)
+        assert a['setup'] == 0 and a['starters'] == 3, a
+        await pg.locator('#modeswitch [data-mode=code]').click()
+        await pg.wait_for_function("document.querySelector('#agentmode').textContent === 'Code'")
+        a = await pg.evaluate(AGENT)
+        assert a['setup'] == 3 and a['starters'] == 0, a
+        assert ws.threads.active.ai.mode == 'code' and ws.mode == 'code'
+        for mode in ('light', 'dark'):
+            await pg.evaluate(f"applyTheme('leela:{mode}:relaxed')"); await pg.wait_for_timeout(300)
+            await pg.screenshot(path=f'{OUT}/v1-agent-code-{mode}.png')
+        await pg.reload(wait_until='networkidle'); await pg.wait_for_function('window.lee && lee.keys.length')
+        await pg.evaluate("leeRight('agent')"); await pg.wait_for_function("document.querySelector('#agentmode')?.textContent === 'Code'")
+        a = await pg.evaluate(AGENT)
+        assert a['setup'] == 3 and a['starters'] == 0, a
+    _run(tmp_path, scenario, dict(width=1500, height=900))
+
+
+def test_a_refused_switch_leaves_the_agent_pane_as_it_was(tmp_path, monkeypatch):
+    pytest.importorskip('playwright.async_api')
+    from leela.blocks.agent.threads import TurnError
+    lr, jid, slug = _env(tmp_path, monkeypatch)
+    async def scenario(pg, ws, port):
+        await pg.locator('#modeswitch [data-mode=learn]').click()
+        await pg.wait_for_function("document.querySelector('#agentmode').textContent === 'Learn'")
+        def refuse(mode): raise TurnError('thread_busy', 'The mode cannot change during a turn. Wait for it to finish, then try again.', 'x')
+        ws.threads.active.set_mode = refuse
+        before = await pg.evaluate(AGENT); docks = await pg.evaluate(DOCKS)
+        await pg.locator('#modeswitch [data-mode=code]').click(); await pg.wait_for_timeout(1000)
+        assert 'cannot change during a turn' in await pg.locator('#status').inner_text()
+        assert await pg.evaluate(AGENT) == before and await pg.evaluate(DOCKS) == docks and ws.mode == 'learn'
+        assert await pg.locator('#modeswitch .active').inner_text() == 'Learn'
+    _run(tmp_path, scenario, dict(width=1500, height=900))
+
+
+def test_code_with_only_the_learn_tab_shows_the_first_run_page_and_stays_code(tmp_path, monkeypatch):
+    pytest.importorskip('playwright.async_api')
+    lr, jid, slug = _env(tmp_path, monkeypatch)
+    async def scenario(pg, ws, port):
+        ws.close(0); ws.open_walk('workspace', jid, 0); ws.mode = 'learn'; ws.save()
+        assert [t.kind for t in ws.tabs] == ['learn']
+        await pg.reload(wait_until='networkidle'); await pg.wait_for_function('window.lee && lee.keys.length')
+        await pg.locator('.abh main').first.wait_for(timeout=30000)
+        assert (await pg.evaluate(DOCKS))['mode'] == 'learn'
+        await pg.locator('#modeswitch [data-mode=code]').click(); await pg.wait_for_timeout(1500)
+        d = await pg.evaluate(DOCKS)
+        assert d['mode'] == 'code' and d['files'] and not d['bar'] and ws.mode == 'code' and ws.tab is None, d
+        ways = await pg.locator('#editor .lee-first .lee-first-way strong').all_inner_texts()
+        assert ways == ['Open a folder', 'Learn something', 'Write or run code'], ways
+        assert await pg.locator('.abh').count() == 0 and await pg.locator('#agentmode').inner_text() == 'Code'
+        for mode in ('light', 'dark'):
+            await pg.evaluate(f"applyTheme('leela:{mode}:relaxed')"); await pg.wait_for_timeout(300)
+            await pg.screenshot(path=f'{OUT}/v1-code-empty-{mode}.png')
+        await pg.reload(wait_until='networkidle'); await pg.wait_for_function('window.lee && lee.keys.length'); await pg.wait_for_timeout(800)
+        d = await pg.evaluate(DOCKS)
+        assert d['mode'] == 'code' and await pg.locator('#editor .lee-first').count() == 1 and ws.tab is None, d
+        await pg.locator('.lee-tab', has_text='Learn').click()
+        await pg.wait_for_function("document.querySelector('#shell').dataset.mode === 'learn'"); await pg.locator('.abh main').first.wait_for(timeout=30000)
+        assert ws.mode == 'learn' and ws.threads.active.ai.mode == 'learn'
+        await pg.locator('#modeswitch [data-mode=code]').click(); await pg.locator('#editor .lee-first').wait_for()
+        await pg.locator('#first-learn').click()
+        await pg.locator('.abh main').first.wait_for(timeout=30000)
+        await pg.wait_for_function("document.querySelector('#agentmode').textContent === 'Learn'")
+        d = await pg.evaluate(DOCKS)
+        assert d['mode'] == 'learn' and d['bar'] and ws.mode == 'learn' and ws.tab.kind == 'learn', d
+    _run(tmp_path, scenario, dict(width=1500, height=900))
+
+
+GRID = "() => { const s = document.querySelector('#shell'), b = document.querySelector('.lee-body'); return {cls: [...s.classList].filter(c => /^(no-|expand-)/.test(c)).sort(), cols: getComputedStyle(b).gridTemplateColumns, handle: s.hasAttribute('data-nohandle')} }"
+WATCH = """() => { window.__shell = []; const grab = () => { const s = document.querySelector('#shell'); if (s) window.__shell.push([...s.classList].filter(c => /^no-/.test(c)).sort().join(' ') + '|' + s.hasAttribute('data-nohandle')); };
+  new MutationObserver(grab).observe(document, {subtree: true, attributes: true, attributeFilter: ['class', 'data-nohandle'], childList: true}); document.addEventListener('DOMContentLoaded', grab); }"""
+
+
+def test_each_mode_keeps_its_own_docks_and_a_reload_paints_them_at_once(tmp_path, monkeypatch):
+    pytest.importorskip('playwright.async_api')
+    lr, jid, slug = _env(tmp_path, monkeypatch)
+    async def scenario(pg, ws, port):
+        ws.open_walk('workspace', jid, 0); ws.save()
+        await pg.evaluate("leePane('left', false); leePane('bottom', true)"); await pg.wait_for_timeout(700)
+        code = await pg.evaluate(GRID)
+        assert 'no-left' in code['cls'] and 'no-bottom' not in code['cls'], code
+        await pg.locator('#modeswitch [data-mode=learn]').click(); await pg.locator('.abh main').first.wait_for(timeout=30000); await pg.wait_for_timeout(800)
+        learn = await pg.evaluate(GRID)
+        assert 'no-bottom' in learn['cls'] and learn['handle'], learn
+        await pg.evaluate("leePane('left', true)"); await pg.wait_for_timeout(700)
+        await pg.locator('#modeswitch [data-mode=code]').click(); await pg.wait_for_timeout(1200)
+        assert await pg.evaluate(GRID) == code
+        await pg.locator('#modeswitch [data-mode=learn]').click(); await pg.wait_for_timeout(1200)
+        again = await pg.evaluate(GRID)
+        assert 'no-left' not in again['cls'] and 'no-bottom' in again['cls'], again
+        await pg.locator('[data-learn-fit]').click(); await pg.wait_for_timeout(700)
+        wide = await pg.evaluate(GRID)
+        assert 'no-left' in wide['cls'] and 'no-bottom' in wide['cls'], wide
+        await pg.locator('#modeswitch [data-mode=code]').click(); await pg.wait_for_timeout(1200)
+        assert await pg.evaluate(GRID) == code
+        await pg.locator('#modeswitch [data-mode=learn]').click(); await pg.wait_for_timeout(1200)
+        assert await pg.evaluate(GRID) == wide
+        for mode in ('light', 'dark'):
+            await pg.evaluate(f"applyTheme('leela:{mode}:relaxed')"); await pg.wait_for_timeout(300)
+            await pg.screenshot(path=f'{OUT}/v1-learn-wide-{mode}.png')
+        html = await (await pg.request.get(f'http://127.0.0.1:{port}/')).text()
+        shell = html[html.rindex('<', 0, html.index('id="shell"')): html.index('>', html.index('id="shell"'))]
+        assert 'no-left' in shell and 'no-bottom' in shell and 'data-mode="learn"' in shell and 'no-right' not in shell, shell
+        await pg.add_init_script(f'({WATCH})()')
+        await pg.reload(wait_until='networkidle'); await pg.wait_for_function('window.lee && lee.keys.length'); await pg.wait_for_timeout(800)
+        seen = await pg.evaluate('window.__shell')
+        assert seen and set(seen) == {'no-bottom no-left|true'}, seen
+        assert await pg.evaluate(GRID) == wide
+        await pg.locator('#modeswitch [data-mode=code]').click(); await pg.wait_for_timeout(1200)
+        assert await pg.evaluate(GRID) == code
+        await pg.reload(wait_until='networkidle'); await pg.wait_for_function('window.lee && lee.keys.length'); await pg.wait_for_timeout(800)
+        assert await pg.evaluate(GRID) == code
     _run(tmp_path, scenario, dict(width=1500, height=900))
