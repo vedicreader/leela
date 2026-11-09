@@ -135,7 +135,8 @@ APP = App(
     grafted    = GRAFTED,
     unreachable= UNREACHABLE,
     data       = DATA_FILES,
-    plist      = {'NSHumanReadableCopyright': 'Apache-2.0', 'UTImportedTypeDeclarations': imported_types()},
+    plist      = {'NSHumanReadableCopyright': 'Apache-2.0', 'UTImportedTypeDeclarations': imported_types(),
+                  'NSMicrophoneUsageDescription': 'Use the microphone to dictate text in Leela.'},
     doc_types  = doc_types(),
     extras     = ['gateway', 'macapp'],
     # The oldest macOS the suite runs on (a macos-14 runner). numpy's wheel for a macOS 14 build needs 14. Leela never ran on kavacha's default, 11.0.

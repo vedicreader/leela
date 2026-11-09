@@ -8,5 +8,7 @@
 	<!-- ctypes and cffi callbacks write code they then run. -->
 	<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
 	<true/>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
 </dict>
 </plist>
