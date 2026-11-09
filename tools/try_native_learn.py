@@ -77,7 +77,12 @@ TRY = """what to try
  9  Press "I don't get this" on a step, or ask it in the agent pane
 10  Settings > Learn: change a row and see it saved
 11  Course page: the demo courses "Diffusion for comics" and "Circuits and signals"; in the second, open an idea and press Show me
-12  With --copy-vault: open Learn and see the import offer (Attach, Back up and copy, Skip)"""
+12  With --copy-vault: open Learn and see the import offer (Attach, Back up and copy, Skip)
+13  Code step: edit the code and run it; the live cell moves the demo, and a slider rewrites the number in the code
+14  Walk step: open the Ladder and climb one rung
+15  Trace button on a cell: run it and read the value of each line
+16  Palette: Mode: Create; drag the time bar, the boat and the sun, then Export page
+17  Learn: Sources for Learn; tick a workspace folder, attach a path and see the reason for a refusal"""
 
 WEB_OFF = 'web research: off (add --web to let the agent search the web)'
 WEB_ON = "web research: ON: topic words are sent to the web search through Leela's privacy guard"
