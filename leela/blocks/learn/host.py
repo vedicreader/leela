@@ -14,6 +14,8 @@ __all__ = ['BASE', 'HOSTS', 'Hosted', 'Prefixed', 'STATE', 'Shared', 'abhyasa_ap
 
 HOSTS = (*LOOPBACK, '.localhost')   # `LoopbackHostGuard`'s rule: loopback, and any `<slug>.localhost`
 LEFT_OUT = ('build', 'guide')
+KEEP = ('/settings/chip', '/settings/catalog')   # the model chip of a check card; the rest of Abhyasa's Settings is Leela's
+FRAME = "frame-ancestors 'self'"
 BASE = '/learn/abh'
 STATE = 'learn-abhyasa'   # Abhyasa's own files, kept in Leela's config folder
 METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS']
@@ -87,9 +89,30 @@ class Shared:
 shared = Shared()
 
 
+def _own(path):
+    "Whether Leela owns the path: Abhyasa's settings writes and its Keys button switch only change files that a host never reads."
+    return path == '/keys/float' or (path.startswith('/settings/') and path not in KEEP)
+
+
 def _known(app, scope):
-    "Whether Abhyasa's own route table answers `scope`; its catch-all for files in the working folder does not count."
-    return any(r.matches(scope)[0] != Match.NONE for r in app.router.routes if not getattr(r, 'path', '').startswith('/{fname'))
+    "Whether Abhyasa's own route table answers `scope`: the route that serves it is not the catch-all for files in the working folder, and it is not a write of Abhyasa's settings."
+    if _own(scope['path']): return False
+    rs = [r for r in app.router.routes if (m := r.matches(scope)[0]) != Match.NONE]
+    first = next((r for r in rs if r.matches(scope)[0] == Match.FULL), next(iter(rs), None))
+    return first is not None and not getattr(first, 'path', '').startswith('/{fname')
+
+
+def framed(send):
+    "`send` with `frame-ancestors 'self'` and `X-Frame-Options` on each response: only a page of this origin can frame Abhyasa."
+    async def go(msg):
+        if msg['type'] == 'http.response.start':
+            h = [(k, v) for k, v in msg.get('headers', []) if k.lower() != b'x-frame-options']
+            i = next((i for i, (k, _) in enumerate(h) if k.lower() == b'content-security-policy'), None)
+            if i is None: h.append((b'content-security-policy', FRAME.encode()))
+            elif b'frame-ancestors' not in h[i][1]: h[i] = (h[i][0], h[i][1] + b'; ' + FRAME.encode())
+            msg = {**msg, 'headers': [*h, (b'x-frame-options', b'SAMEORIGIN')]}
+        await send(msg)
+    return go
 
 
 class Hosted:
@@ -121,7 +144,7 @@ class Hosted:
         if path is not None: sc.update(path=path, raw_path=quote(path).encode())
         from abhyasa.learner import use_settings
         cur = learn_settings(self.ws)
-        with using(self.ws), use_settings({**cur, **speech_values(cur=cur)}): await app(sc, receive, send)
+        with using(self.ws), use_settings({**cur, **speech_values(cur=cur)}): await app(sc, receive, framed(send))
     async def open(self, req):
         "POST `/learn/abh/open`: build the app if needed."
         if why := self._host(req.scope): return PlainTextResponse(why, 403)

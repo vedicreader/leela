@@ -301,3 +301,57 @@ The agent pane builds and changes a walk through the one Leela session. Abhyasa 
 - The skill text stays under its cap: four wordy feature sentences were cut to pay for the new tool names.
 
 UI still to build: a button in the Learn tab, and a chord, that sends "I don't get this" to the agent pane (the guide board of the standalone app); the tab must reload its page after a `learn_change` job ends or a hand change.
+
+## Modes
+
+A mode is a named workspace preset. `code` is the base mode. `learn` registers itself when the Learn block connects. A new mode is one `register_mode(Mode(...))` call.
+
+Built (Python side):
+- `leela/blocks/modes/modes.py`: `Mode`, `register_mode`, `get_mode`, `modes`, and `cell_anchor`. A second mode with the same id is refused.
+- `Assistant.mode` is a string ('code' by default) in place of the old `learn_mode` flag. `Thread.set_mode(mode)` keeps every guarantee of the old switch: idle only, under the turn lock, tools and context refresh together, rollback on failure, refused while a turn, a queued message or an approval is pending, and refused with `contract_missing` when the mode's contract check fails.
+- A tool from another mode answers the `mode_off` error. `data` holds `mode` (the current mode) and `needs` (the mode that owns the tool).
+- Saved modes: `agent-modes.json` holds `{thread: mode}`. The old `agent-learn.json` is read as 'learn' and is never written.
+- `Workspace.mode`, `mode_layouts` and `mode_focus` are saved and restored. Switching closes nothing. Learn focuses the one `learn` tab at its last page, and makes it at `/` if it is absent. Code focuses the last editor tab.
+- In Code mode the agent turn context ends with the active notebook cell (`cell_anchor`): its source, the last error, and clipped output. `POST /agent/turn` takes an optional `cell` (a cell id) and the workspace remembers it on the tab.
+
+JSON for the UI:
+- `GET /workspace/mode`: `{mode, modes: [{id, title, layout, palette, bar, tab_kinds}], layouts: {mode: layout}}`.
+- `POST /workspace/mode {mode, thread?}`: `{ok, mode, layout, focus: {kind, path}}`. It switches the agent conversation first. When the agent refuses, the workspace mode does not change and the refusal comes back with status 409 (`{ok: false, code, message, thread}`). An unknown mode gives 400.
+- `POST /workspace/layout {mode, layout}`: `{ok, mode, layout}`. Layout keys: `files`, `exec`, `exec_handle`, `agent` (booleans) and `main` (string).
+- `POST /agent/mode {mode, thread?}`: `{ok, mode, on, thread}`. `POST /agent/learn-mode {on}` stays one release as an alias.
+- `GET /agent/threads` adds `modes` (`{thread: mode}`) and `mode` (the workspace mode). It keeps `learn_modes` (`{thread: bool}`). Each thread row has `mode` and `learn_mode`.
+- The agent feed emits `mode {mode}` and, for the old page code, `learn_mode {on}`.
+
+Deferred: the title-bar switch and the mode bar (JS), the palette commands `Mode: Code` and `Mode: Learn`, the `Learn about this` command, the first-run offer, per-mode key sets, and a `create` mode.
+
+## Hosted route audit
+
+Abhyasa's app has 210 route entries under Leela's origin (the catch-all mount and `/learn/abh`). `tests/test_learn_route_security.py` lists them from the built app and puts each in one group. A route that fits no group fails the test.
+
+| Group | Routes | What it can reach | Rule |
+| --- | --- | --- | --- |
+| Read pages | 67 GET | The vault, read only | Same guard as every route |
+| Changes | 46 POST | The vault: answers, plans, talks, concepts, profile | Cross-site and foreign-port POST refused |
+| Model calls and jobs | 35 POST | The model of Leela, background jobs, the microphone | Same guard; the model call goes through Leela's assistant |
+| Files | 17 | A folder or file in the home folder, a dropped file, a notebook | Only the home folder, not hidden, no link (`source_root_why`, `file_why`) |
+| Files that Abhyasa serves | 19 GET | Its own assets, vendor files, figures, pictures, JSON | Fixed folders, or the vault |
+| Settings and keys | 25 | Abhyasa's settings file and key file | Blocked, except `/settings/chip` and `/settings/catalog` |
+| Catch-all static | 1 GET | The working folder | Never answers: `_known` refuses a path when this route is the first match |
+
+Three layers apply to every request:
+
+1. `LoopbackHostGuard` of Leela, which `serve_ide` puts outside the whole app. It refuses a foreign Host, a foreign Origin, `Sec-Fetch-Site: cross-site` and a change from another port. Hosted routes do not need a second guard.
+2. `Hosted` calls `LocalOnly.refuse`, so the same rules hold when the guard is not there. It answers 403.
+3. Each response has `frame-ancestors 'self'` and `X-Frame-Options: SAMEORIGIN`.
+
+Findings that the tests showed, and what changed:
+
+- A path such as `/c/x.txt` fits a known route and the static catch-all. The catch-all came first and served `x.txt` from the working folder, and `/v/%2e%2e/x.txt` read one level up. Fixed: `_known` now looks at the first route that matches.
+- Abhyasa pages had no frame header. Fixed in `Hosted._serve`.
+- Settings writes (`/settings/value`, `/settings/key`, `/settings/model`, `/keys/float`, and the others) were live. They wrote a settings file and a `keys.env` that Leela never reads. Fixed: they answer 404. The model chip of a check card keeps `/settings/chip` and `/settings/catalog`. Leela owns settings and keys.
+- A cross-site request gets 421 (foreign Host or site) or 403 (foreign Origin on a change) from the guard, the same as a route of Leela.
+
+Open:
+
+- `/learn/pick` opens a macOS folder chooser. It needs a loopback client and passes both guards, so only a Leela page can ask.
+- The GET routes that start work (`/w/{jid}/gather`, `/improve`, `/replan`, `/s/{sid}/end`, `/w/{jid}/{i}/done`) are safe from other sites by the guard. A page of Leela itself can still call them.
