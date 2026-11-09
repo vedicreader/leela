@@ -16,7 +16,7 @@ def test_new_lesson_is_an_unbound_palette_command_in_the_file_menu():
     assert actions[actions.index('new_notebook') + 1] == 'new_lesson'
 
 HELP_PRESENT = 'These keys work only during a presentation. They cannot be rebound. Laser and blank have no button.'
-HELP_TOP = 'Every key outside the present section can be rebound. Each of those keys also has a button.'
+HELP_TOP = 'Every key outside the present and Learn sections can be rebound. Each of those keys also has a button.'
 
 def test_the_keys_help_says_the_presentation_keys_cannot_be_rebound():
     "The help said every key in it could be rebound; the `present` rows are display rows, not bindings."
@@ -26,6 +26,17 @@ def test_the_keys_help_says_the_presentation_keys_cannot_be_rebound():
     body = js[js.index('function showHelp'):]; body = body[:body.index('\n}\n')]
     assert 'every one of these can be rebound' not in body and HELP_TOP in body
     assert "scope === 'present'" in body and HELP_PRESENT in body and 'present' in help_rows()
+
+def test_the_keys_help_lists_the_learn_keys_in_learn_mode_only_and_they_bind_nothing():
+    "Learn rows are display rows, with an empty chord for a button-only action; the help shows them when a Learn tab is open."
+    from pathlib import Path
+    from leela.core.keys import DEFAULTS, LEARN_KEYS, SCOPES, _dupes, help_rows, parse_key, web_keymap
+    js = (Path(__file__).parents[1]/'leela'/'static'/'js'/'overlays.js').read_text()
+    body = js[js.index('function showHelp'):]; body = body[:body.index('\n}\n')]
+    assert "lee.kind === 'learn'" in body and "scope !== 'learn'" in body
+    assert help_rows()['learn'] == list(LEARN_KEYS) and any(not c for c, _ in LEARN_KEYS)
+    assert 'learn' not in SCOPES and not [k for k in web_keymap() if k['scope'] == 'learn'] and _dupes(DEFAULTS) == []
+    assert not [c for cs, _ in LEARN_KEYS for c in cs.split() if 'hyper' in c or parse_key(c)[1] == 'f' and 'alt' in parse_key(c)[0]]
 
 def test_no_default_chord_lands_on_one_the_browser_will_not_deliver():
     reserved = {'ctrl+up', 'ctrl+down', 'ctrl+left', 'ctrl+right'}

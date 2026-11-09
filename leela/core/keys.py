@@ -7,7 +7,7 @@ from kavacha import chord_glyph
 
 __all__ = ['Key', 'SCOPES', 'EDITING_SCOPES', 'KEYS', 'DEFAULTS', 'NOTES',
            'parse_key', 'web_key', 'by_scope', 'web_keymap',
-           'help_rows', 'PRESENT_KEYS', 'toast_rows', 'lookup', 'chord_display', 'keymap_path', 'read_overrides',
+           'help_rows', 'PRESENT_KEYS', 'LEARN_KEYS', 'toast_rows', 'lookup', 'chord_display', 'keymap_path', 'read_overrides',
            'apply_overrides', 'TOOK', 'only_changed', 'bulk_map', 'keymap_json', 'write_keymap', 'reload',
            'changed', 'refresh', 'VERSION', 'SAME_IDEA', 'NO_MENU', 'TWICE', 'CHROME_RESERVED', 'LEGACY',
            'glyphs', 'legacy_rows']
@@ -421,16 +421,22 @@ def legacy_rows():
 def glyphs(extra=()):
     "Every chord the page may show, as `{'mac': {chord: glyph}, 'pc': {chord: text}}`."
     cs = {c for k in KEYS for c in k.keys}
-    cs |= {c for ks, _ in PRESENT_KEYS for c in ks.split()} | set(LEGACY) | set(extra)
+    cs |= {c for ks, _ in (*PRESENT_KEYS, *LEARN_KEYS) for c in ks.split()} | set(LEGACY) | set(extra)
     return {'mac': {c: chord_glyph(c) for c in cs}, 'pc': {c: chord_glyph(c, mac=False) for c in cs}}
 
 #: The presenter's keys as `(chords, label)`, for the keys help only. `present.js` binds them while a presentation is open; no row is a binding.
 PRESENT_KEYS = (('right down space pagedown', 'next step'), ('left up shift+space pageup', 'previous step'), ('n', 'speaker notes'),
                 ('f', 'full screen on or off'), ('x', 'laser on or off'), ('b', 'blank screen on or off'), ('escape', 'close one thing'))
 
+#: The keys of a Learn page as `(chords, label)`, for the keys help in Learn mode only. `walk.js` answers them; an empty chord is an action with no key.
+LEARN_KEYS = (('alt+s', 'send the check, or go to the next idea'), ('alt+w', 'ask for a hint'), ('alt+c', 'continue where you stopped'),
+              ('alt+x', "I don't know, or teach me"), ('alt+a', 'teach it in another way'), ('alt+e', 'show me a demo'), ('alt+v', 'keep the state of the demo'),
+              ('alt+b', 'learn a missing idea in a side walk'), ('alt+d', 'speak into the text box'), ('/', 'search what you learned'),
+              ('mod+enter', 'send the form from a box'), ('', "I don't get this: ask the agent about what you see"))
+
 def help_rows():
-    "Every binding grouped by scope, and the presenter's keys as `present`, for the full help overlay: {scope: [(chord_display, label)]}."
-    return {**{s: [(chord_display(k), k.label) for k in by_scope(s) if k.label] for s in SCOPES}, 'present': list(PRESENT_KEYS)}
+    "Every binding grouped by scope, the presenter's keys as `present` and the Learn keys as `learn`, for the full help overlay: {scope: [(chord_display, label)]}."
+    return {**{s: [(chord_display(k), k.label) for k in by_scope(s) if k.label] for s in SCOPES}, 'present': list(PRESENT_KEYS), 'learn': list(LEARN_KEYS)}
 
 def toast_rows():
     "The short cheatsheet for the left sidebar: keys that earn space but are not in the footer."

@@ -401,18 +401,20 @@ window.addEventListener('resize', () => { closeMenu(); layoutTabs(); });
 window.addEventListener('scroll', e => { if (!e.target.closest?.('.lee-ctxmenu, #agentlog')) closeMenu(); }, true);
 
 function showHelp() {
-  const scopes = Object.entries(lee.help).sort(([a], [b]) =>
-    a === lee.scope ? -1 : b === lee.scope ? 1 : a === 'global' ? -1 : b === 'global' ? 1 : 0);
+  const learn = lee.kind === 'learn', here = learn ? 'learn' : lee.scope;   // the Learn section shows in Learn mode only
+  const scopes = Object.entries(lee.help).filter(([scope]) => learn || scope !== 'learn').sort(([a], [b]) =>
+    a === here ? -1 : b === here ? 1 : a === 'global' ? -1 : b === 'global' ? 1 : 0);
   const body = scopes.map(([scope, rows]) =>
-    `<section class="lee-help-scope${scope === lee.scope ? ' active' : ''}"><h4>${esc(scope)}` +
-    `${scope === lee.scope ? '<span>current</span>' : ''}</h4>` +
+    `<section class="lee-help-scope${scope === here ? ' active' : ''}"><h4>${esc(scope === 'learn' ? 'Learn' : scope)}` +
+    `${scope === here ? '<span>current</span>' : ''}</h4>` +
+    (scope === 'learn' ? '<p class="lee-dim lee-help-note">These keys work on a Learn page. They cannot be rebound. A row with no key is a button only.</p>' : '') +
     (scope === 'present' ? '<p class="lee-dim lee-help-note">These keys work only during a presentation. They cannot be rebound. Laser and blank have no button.</p>' : '') +
     (scope === 'editor' ? '<p class="lee-dim lee-help-note">In a notebook, a single letter works only when you do not edit a cell. Press Escape to stop editing. Press D two times to delete a cell. Hold ' + esc(displayChord('alt')) + ' and drag a number in a code cell to scrub it. ' + esc(displayChord('alt+up')) + ' or ' + esc(displayChord('alt+down')) + ' on a number moves it one step. "Nudge the number" and "scrub the number" are in the command palette. Live scrub is opt-in per cell, runs on a copy in a separate process, and only for plain data.</p>' : '') + rows.map(([k, l]) =>
-      `<div class="lee-krow"><kbd>${esc(displayChord(k))}</kbd><span>${esc(l)}</span></div>`).join('') + '</section>').join('');
+      `<div class="lee-krow">${k ? `<kbd>${esc(displayChord(k))}</kbd>` : '<kbd></kbd>'}<span>${esc(l)}</span></div>`).join('') + '</section>').join('');
   const m = modal(
     `<div class="lee-mhead">keys<span class="sub">${esc(lee.keyPath || '')}</span></div>` +
     (lee.keyNotes || []).map(n => `<div class="lee-err">${esc(n)}</div>`).join('') +
-    `<div class="lee-dim">Every key outside the present section can be rebound. Each of those keys also has a button.</div>` +
+    `<div class="lee-dim">Every key outside the present and Learn sections can be rebound. Each of those keys also has a button.</div>` +
     `<div class="lee-help">${body}</div>` +
     `<div class="lee-mfoot"><button class="lee-btn" id="gokeys">edit keybindings</button></div>`);
   m.querySelector('#gokeys').onclick = () => { m.remove(); editKeys(); };

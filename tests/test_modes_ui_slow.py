@@ -121,10 +121,9 @@ def test_keys_search_toasts_and_the_reserved_strip_in_the_learn_tab(tmp_path, mo
         tabs = await pg.locator('.lee-tab').count()
         await pg.keyboard.press('Alt+KeyW'); await pg.wait_for_timeout(500)
         assert await pg.locator('.lee-tab').count() == tabs and ws.tab.kind == 'learn'
-        assert await pg.evaluate("getComputedStyle(document.querySelector('.abh .kf-pill')).display") == 'none'
-        was = await pg.evaluate("!document.querySelector('#kf-panel').hidden")
-        await pg.locator('[data-learn-keys]').click(); await pg.wait_for_timeout(300)
-        assert await pg.evaluate("!document.querySelector('#kf-panel').hidden") != was
+        assert await pg.locator('.abh .kf-pill').count() == 0
+        await pg.locator('[data-learn-keys]').click()
+        await pg.locator('.lee-help h4', has_text='Learn').wait_for(timeout=5000)
         await pg.keyboard.press('Escape')
         await pg.locator('.lee-learn-find input').fill('fractions')
         await pg.evaluate("leeLearnNav('/graph')"); await pg.locator('.abh #graph canvas').wait_for(timeout=30000); await pg.wait_for_timeout(500)

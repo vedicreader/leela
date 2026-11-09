@@ -99,16 +99,16 @@ def test_palette_opens_home_with_continue_courses_keys_and_start(tmp_path, monke
         assert await abh.locator('[data-part=continue-card] a.btn.go').count() == 1
         assert await abh.locator('.review-line').inner_text() and await abh.locator('[data-part=walks] .jrow').count() == 2
         assert await abh.locator('#start-form #start-q').count() == 1
-        assert await pg.locator('#modebar [data-learn-keys]').is_visible() and not await abh.locator('#kf-panel').is_visible()
+        assert await pg.locator('#modebar [data-learn-keys]').is_visible() and await abh.locator('#kf, #kf-panel').count() == 0
         w, full = await pg.evaluate(MAIN)
         assert w <= 740 and full > 900, (w, full)
         await _shot(pg, 'p3-today')
         assert await pg.evaluate(SHELL) == before
         await pg.locator('#modebar [data-learn-keys]').click()
-        assert await abh.locator('#kf-panel').is_visible() and await abh.locator('.kf-do').count() >= 3
+        help_ = pg.locator('.lee-help'); await help_.wait_for(timeout=5000)
+        assert await help_.locator('h4', has_text='Learn').count() == 1 and await abh.locator('#kf').count() == 0
         await pg.screenshot(path=f'{OUT}/p3-today-keys-light.png')
-        await abh.locator('#kf-close').click()
-        assert not await abh.locator('#kf-panel').is_visible()
+        await pg.keyboard.press('Escape'); await help_.wait_for(state='detached', timeout=5000)
         await abh.evaluate("el => el.scrollTo(0, el.scrollHeight)")
         await pg.wait_for_timeout(300)
         assert await pg.locator('#modebar [data-learn-keys]').is_visible() and not await abh.locator('#kf-pill').is_visible()
