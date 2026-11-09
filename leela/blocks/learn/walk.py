@@ -120,10 +120,9 @@ def abh_styles():
     root = files('abhyasa')
     css = '\n'.join((root/p).read_text() for p in ('core/base.css', 'blocks/walk/walk.css'))
     css = re.sub(r'@font-face\s*\{.*?\}', '', css, flags=re.S)
-    css = re.sub(r'\[data-theme(?:=[^\]]+)?\]', '.abh', css)
-    css = css.replace(':root', '.abh').replace('html.in-pane', '.abh').replace('html.rh-open', '.abh')
-    css = re.sub(r'(?<![-\w])body(?![-\w])', '.abh', css)
-    css = re.sub(r'(?<![-\w])main(?![-\w])', '.abh', css)
+    css = re.sub(r'\[data-theme(?:=[^\]]+)?\]', ':scope', css)
+    css = css.replace(':root', ':scope').replace('html.in-pane', ':scope').replace('html.rh-open', ':scope')
+    css = re.sub(r'(?<![-\w])body(?![-\w])', ':scope', css)
     return '@scope (.abh) {\n' + css + '\n}\n'
 
 
