@@ -414,6 +414,10 @@ function leeModeLayout(l) {
   s.toggleAttribute('data-nohandle', l.exec_handle === false);
   if (l.agent && !narrow && lee.mode === 'learn') leeRight('agent');
 }
+/* The mode follows a tab only when a person moves to it: a click or a key in the last moment. A mode switch or a restore mounts tabs too, and must not undo itself. */
+let personAt = 0;
+for (const t of ['click', 'keydown']) document.addEventListener(t, e => { if (e.isTrusted) personAt = Date.now(); }, true);
+const leeModeAgent = mode => { lee.agentMode = mode; lee.agentLearnMode = mode === 'learn'; paintAgentLearn?.(); refreshAgentThreads?.().catch(() => {}); };
 async function leeModeSet(mode, follow = false) {
   if (!mode || mode === lee.mode) return true;
   const was = lee.mode, keep = leeModeDock();
@@ -422,17 +426,21 @@ async function leeModeSet(mode, follow = false) {
     await post('/workspace/layout', {mode: was, layout: keep}).catch(() => {});
     const r = await fetch('/workspace/mode', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({mode, thread: lee.agentThread || undefined})});
     const d = await r.json().catch(() => ({}));
-    if (!r.ok) { status(d.message || 'The mode could not change.', 'err'); if (!follow) { leeModePaint(); return false; } }
+    if (!r.ok) {
+      status(d.message || 'The mode could not change.', 'err');
+      if (follow) { await htmx.ajax('GET', '/tab/bar', {target: '#tabbar', swap: 'outerHTML'}); await post('/workspace/mode', {mode: was}).catch(() => {}); await mountTab(); }
+      leeModePaint(); return false;
+    }
     lee.modeLayouts[was] = keep; lee.mode = mode;
-    leeModePaint(); leeModeLayout(r.ok ? (lee.modeLayouts[mode] = d.layout) : lee.modeLayouts[mode]);
-    if (!follow && r.ok) {
+    leeModePaint(); leeModeLayout(lee.modeLayouts[mode] = d.layout); leeModeAgent(d.mode || mode);
+    if (!follow) {
       if (mode === 'learn') await leeLearnOpen(d.focus?.path || '/');
       else { await htmx.ajax('GET', '/tab/bar', {target: '#tabbar', swap: 'outerHTML'}); await mountTab(); }
     }
     return true;
   } finally { lee.modeBusy = false; }
 }
-const leeModeFollow = kind => { if (!lee.modeBusy && kind) leeModeSet(kind === 'learn' ? 'learn' : 'code', true); };
+const leeModeFollow = kind => { if (!lee.modeBusy && kind && Date.now() - personAt < 2500) leeModeSet(kind === 'learn' ? 'learn' : 'code', true); };
 let keepTimer;
 function leeModeKeep() {
   clearTimeout(keepTimer);
@@ -9161,9 +9169,8 @@ window.leePaintRecent = paintRecent;
 
 // First-run "Learn something": switch the workspace to Learn mode, show its tab, then focus the Start box.
 async function firstLearn() {
-  try { await post('/workspace/mode', {mode: 'learn'}); }
+  try { if (!await leeModeSet('learn')) return; }
   catch (e) { return status(e.message || 'Learn did not open', 'err'); }
-  await refreshTabStrip(); await mountTab().catch(() => {});
   for (let i = 0; i < 100; i++) {
     const q = $('#start-q'); if (q) return q.focus();
     await new Promise(ok => setTimeout(ok, 100));

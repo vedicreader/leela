@@ -2430,7 +2430,7 @@ async function learnMount(host, st) {
     let path = r ? r.pathname + r.search : pending?.path;
     path = path.replace(LEARN, '').replace(/([?&])pane=1&?/, '$1').replace(/[?&]$/, '') || '/';
     if (cur && path !== cur && !(pending?.goBack)) trail.push(cur);
-    if (path !== cur) fetch('/learn/tab/page', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path})});
+    if (path !== cur) fetch('/learn/tab/page', {method: 'POST', keepalive: true, headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path})}).then(r => r.text()).catch(() => {});
     cur = path; pending = null; learnChips(bar, cur);
     const find = bar.querySelector('.lee-learn-find input'); if (find) find.value = /^\/search\?/.test(cur) ? new URLSearchParams(cur.split('?')[1]).get('q') || '' : ''; back.disabled = !trail.length; change.hidden = !/^\/w\//.test(cur);
     const main = abh.querySelector('main');
