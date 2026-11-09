@@ -10,7 +10,7 @@ SURFACES = [
     (r'^/dictate$', dict(js=['dictate.js'])),
     (r'^/(?:[wc]|t)/', dict(css=[], js=['learn-demo.js'], rerun=[])),
     (r'^/(?:$|c/|course/|w/|walks)', dict(css=['home.css'], js=['home.js'], rerun=['home.js'])),
-    (r'^/(?:w/|walks)', dict(css=[], js=['walkpage.js'])),
+    (r'^/(?:w/|walks)', dict(css=[], js=['edit.js', 'walk.js', 'walkpage.js'])),
     (r'^/(?:library/)?graph(?:/|$)', dict(css=[], js=['d3.min.js', 'graph.js'], rerun=['graph.js'])),
 ]
 
