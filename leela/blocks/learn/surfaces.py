@@ -11,6 +11,7 @@ SURFACES = [
     (r'^/dictate$', dict(js=['dictate.js'])),
     (r'^/(?:[wc]|t)/', dict(css=[], js=['learn-demo.js'], rerun=[])),
     (r'^/(?:$|c/|course/|w/|walks)', dict(css=['home.css'], js=['home.js'], rerun=['home.js'])),
+    (r'^/[wc]/', dict(css=['learn-cell.css'], js=['learn-cell.js'], rerun=['learn-cell.js'])),
     (r'^/(?:w/|walks)', dict(css=[], js=['edit.js', 'abhyasa:walk.js', 'walkpage.js'])),
     (r'^/t/[^/]+/present', dict(css=['stage.css'], js=['stage.js'])),
     (r'^/(?:t/|talks)', dict(css=['learn-talk.css'], js=['edit.js', 'abhyasa:talk.js', 'learn-talk.js'])),

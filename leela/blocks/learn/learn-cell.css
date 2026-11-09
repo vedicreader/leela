@@ -1,0 +1,21 @@
+.abh .lee-livecell { margin: 16px 0; border: 1px solid var(--line, var(--lee-border)); border-radius: 6px; background: var(--lee-bg1, transparent); color: var(--fg, var(--lee-fg)); }
+.abh .lee-livecell:not(.lv-on) { padding: 8px 12px; }
+.abh .lv-top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 6px 12px 0; }
+.abh .lv-safe { font-size: 12px; color: var(--mute, var(--lee-fg4)); }
+.abh .lv-ro { margin: 6px 0 0; padding: 4px 12px; font: var(--lee-code-size, 13px)/1.5 var(--lee-mono, monospace); color: var(--mute, var(--lee-fg4)); background: transparent; border: 0; overflow-x: auto; }
+.abh .lv-ed { margin: 4px 0; min-height: 3em; font-size: var(--lee-code-size, 13px); }
+.abh .lv-ed .cm-editor { background: transparent; max-height: 26em; }
+.abh .lv-ta { box-sizing: border-box; width: 100%; padding: 6px 12px; border: 0; resize: vertical; background: transparent; color: inherit; font: var(--lee-code-size, 13px)/1.5 var(--lee-mono, monospace); tab-size: 4; }
+.abh .lv-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 6px 12px; border-top: 1px solid var(--line, var(--lee-border)); }
+.abh .lv-key { font-size: 12px; color: var(--mute, var(--lee-fg4)); margin-right: 8px; }
+.abh .lv-state { font-size: 13px; color: var(--mute, var(--lee-fg4)); }
+.abh .lv-out { padding: 0 12px; }
+.abh .lv-out pre, .abh .lv-out img { margin: 6px 0; }
+.abh .lv-out pre { padding: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: var(--lee-code-size, 13px)/1.5 var(--lee-mono, monospace); background: transparent; border: 0; color: var(--lee-output, inherit); }
+.abh .lv-out .lv-result { color: var(--lee-aqua, var(--acc)); }
+.abh .lv-out .lv-err { color: var(--lee-red, #cf222e); }
+.abh .lv-out .lv-none { color: var(--mute, var(--lee-fg4)); font-family: inherit; }
+.abh .lv-out img { max-width: 100%; height: auto; background: #fff; border-radius: 4px; }
+.abh .lv-watch { margin: 4px 12px 10px; border-collapse: collapse; font: 13px var(--lee-mono, monospace); }
+.abh .lv-watch th, .abh .lv-watch td { padding: 2px 16px 2px 0; text-align: left; font-weight: normal; }
+.abh .lv-watch th { color: var(--mute, var(--lee-fg4)); }

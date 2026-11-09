@@ -457,6 +457,7 @@ POST /dev/stop
 POST /fs/add-root
 POST /fs/add_root
 POST /learn/abh/open
+POST /learn/cell/run
 POST /learn/env
 POST /learn/open
 POST /learn/scratch
