@@ -7,9 +7,10 @@ from ... import errstr
 from ...core.web import fail, off_loop
 from ...hub import LOOPBACK
 from ..memory.vaults import LEARN
-from .tools import learn_ask, learn_store
+from .speech import make_transcribe, speech_values
+from .tools import learn_ask, learn_settings, learn_store
 
-__all__ = ['BASE', 'HOSTS', 'Hosted', 'Prefixed', 'Shared', 'abhyasa_app', 'host_ask', 'learn_key', 'mount_abhyasa', 'no_speech', 'shared', 'using']
+__all__ = ['BASE', 'HOSTS', 'Hosted', 'Prefixed', 'Shared', 'abhyasa_app', 'host_ask', 'learn_key', 'mount_abhyasa', 'shared', 'using']
 
 HOSTS = (*LOOPBACK, '.localhost')   # `LoopbackHostGuard`'s rule: loopback, and any `<slug>.localhost`
 LEFT_OUT = ('build', 'guide')
@@ -37,9 +38,6 @@ def host_ask(ai):
     return HostAsk()
 
 
-def no_speech(audio, hint=''): raise RuntimeError('Speech comes in S6: Leela has no transcribe function yet.')
-
-
 class _Live:
     "The assistant of the workspace that the current request or job belongs to, looked up on each use."
     def __getattr__(self, name):
@@ -58,7 +56,7 @@ def abhyasa_app(ws, ai=None, hosts=None):
     from abhyasa.app import mk_app
     from abhyasa.blocks import NAMES
     _, lr = learn_store(ws)
-    return mk_app(lr, host_ask(ai or _Live()), transcribe=no_speech, names=[n for n in NAMES if n not in LEFT_OUT], warm_speech=False, hosts=hosts or HOSTS)
+    return mk_app(lr, host_ask(ai or _Live()), transcribe=make_transcribe(ws.jobs, lambda: ws.project_root), names=[n for n in NAMES if n not in LEFT_OUT], warm_speech=False, hosts=hosts or HOSTS)
 
 
 class Shared:
@@ -117,7 +115,9 @@ class Hosted:
     async def _serve(self, app, scope, receive, send, path=None):
         sc = dict(scope)   # a copy: Abhyasa's session middleware must not replace the one Leela's holds
         if path is not None: sc.update(path=path, raw_path=quote(path).encode())
-        with using(self.ws): await app(sc, receive, send)
+        from abhyasa.learner import use_settings
+        cur = learn_settings(self.ws)
+        with using(self.ws), use_settings({**cur, **speech_values(cur=cur)}): await app(sc, receive, send)
     async def open(self, req):
         "POST `/learn/abh/open`: build the app if needed."
         if why := self._host(req.scope): return PlainTextResponse(why, 403)

@@ -152,6 +152,7 @@ def test_the_hosted_app_gets_a_copy_of_the_scope(monkeypatch):
         async def __call__(self, *a): await run(*a)
     inner = Inner()
     monkeypatch.setattr(host, 'learn_key', lambda ws, make=False: 'k')
+    monkeypatch.setattr(host, 'learn_settings', lambda ws: {})
     monkeypatch.setattr(host, 'HOSTS', ('testserver',))
     box = host.Shared(); box.app, box.key = inner, 'k'
     h = host.Hosted(None, reg=box)

@@ -179,6 +179,7 @@ const ACTIONS = {
   vault_next_flag: () => leeVaultFlag(1),
   vault_prev_flag: () => leeVaultFlag(-1),
   vault_review: () => leeVaultReview(),
+  dictate: async () => { await learnSurface('/dictate'); return leeDictate(); },
   learned_review: () => leeVaultReview('', '', '', 'learned'),
   vault_reread: () => leeVaultDoc('reread'),
   vault_history: () => leeVaultDoc('history'),

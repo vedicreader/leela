@@ -19,6 +19,7 @@ GET /present/deck
 GET /present/img/{h}
 GET /present/room
 GET /present/stage.js
+GET /speech/events/{did}
 GET,POST /
 GET,POST /agent/approval
 GET,POST /agent/approval/always
@@ -476,6 +477,10 @@ POST /present/out
 POST /present/resume
 POST /present/show-error
 POST /present/start
+POST /speech/ready
+POST /speech/seg/{did}
+POST /speech/start
+POST /speech/stop/{did}
 POST /tab/offer/dismiss
 POST /term/external
 POST /tree/git

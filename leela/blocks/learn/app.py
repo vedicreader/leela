@@ -6,6 +6,7 @@ from ... import errstr
 from ...core.web import NOT_OBJECT, fail, json_obj, off_loop
 from ..memory.memory import _open_lock
 from ..settings.settings import register_section
+from .speech import connect as connect_speech, speech_rows
 from .ui import DocPage, FolderPage, LookupPage, OpenedPage, Page, StepPage
 
 __all__ = ['CAPS', 'connect', 'learn_rows']
@@ -20,7 +21,7 @@ def learn_rows():
     "The Learn settings section from Abhyasa's `SETTINGS`: file-stored rows of its own groups. Profile rows belong to the vault, and `sources.roots` to Leela's folder controls."
     try:
         from abhyasa.learner import SETTINGS, GROUPS
-        return [dict(key=r.name, dflt=r.dflt, kind=r.kind, lo=r.lo, hi=None if isinstance(r.hi, str) else r.hi, hi_key=r.hi if isinstance(r.hi, str) else None, choices=r.choices,
+        return speech_rows() + [dict(key=r.name, dflt=r.dflt, kind=r.kind, lo=r.lo, hi=None if isinstance(r.hi, str) else r.hi, hi_key=r.hi if isinstance(r.hi, str) else None, choices=r.choices,
                      label=r.label, help=r.help, unit=r.unit, pct=r.pct, more=r.more, group=r.group, group_label=GROUPS[r.group][0])
                 for r in SETTINGS.values() if r.group in LEARN_GROUPS and r.ui and r.store == 'file' and r.section != 'sources']
     except (ImportError, AttributeError, KeyError) as e:
@@ -101,6 +102,7 @@ SWEEP = 10.   # seconds between two looks at the result of each open lesson
 
 def connect(app, ctx):
     from .walk import connect as connect_walk; connect_walk(app, ctx)
+    connect_speech(app, ctx)
     from .tools import contract_missing
     if missing := contract_missing(): log.warning('Learn is off: the installed abhyasa lacks %s', ', '.join(missing))
     elif rows := learn_rows(): register_section('learn', rows, 'abhyasa')
