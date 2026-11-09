@@ -51,3 +51,10 @@ def test_the_keyring_is_a_fake_per_test(fake_keyring):
     import keyring
     keyring.set_password('leela-test', 'k', 'v')
     assert fake_keyring.get_password('leela-test', 'k') == 'v' and keyring.get_keyring() is fake_keyring
+
+def test_isolate_with_no_base_after_a_call_moves_nothing():
+    "A slow test module calls `isolate()` as it is collected: that must leave the suite's own folder in place."
+    from tools.isolate import isolate
+    before = dict(os.environ)
+    assert 'leela-iso-' not in str(isolate())
+    assert dict(os.environ) == before

@@ -20,9 +20,13 @@ def isolated_env(base):
                 LEELA_SEARCH_VAULT=b/'vault'/'search.db', ABHYASA_CONFIG=b/'abhyasa', RAMABANA_CONFIG=b/'ramabana'/'config.toml',
                 LEELA_MEMORY_OFFLINE='1')
 
+_done = None
+
 def isolate(base=None):
-    "Set the stores' variables under `base` (a new temporary folder if None), move ramabana's probes there, and return `base`."
-    b = Path(base or tempfile.mkdtemp(prefix='leela-iso-'))
+    "Set the stores' variables under `base` (a new temporary folder if None), move ramabana's probes there, and return `base`. With no `base` after a call, it moves nothing: a test module that collects must not undo the suite's own folder."
+    global _done
+    if base is None and _done is not None: return _done
+    b = _done = Path(base or tempfile.mkdtemp(prefix='leela-iso-'))
     os.environ.update({k: str(v) for k, v in isolated_env(b).items()})
     isolate_probes(b)
     return b
