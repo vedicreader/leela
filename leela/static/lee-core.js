@@ -3804,7 +3804,7 @@ function setTabSaveState(tab, state, detail = '') {
 }
 function scheduleAutoSave() {
   clearTimeout(lee.autoSaveTimer);
-  if (autoSaveMode() !== 'afterDelay' || !lee.path || lee.heldSaveConflicts.has(lee.path)) return;
+  if (lee.scrubbing || autoSaveMode() !== 'afterDelay' || !lee.path || lee.heldSaveConflicts.has(lee.path)) return;
   const version = lee.editVersion;
   lee.autoSaveTimer = setTimeout(async () => {
     if (autoSaveMode() !== 'afterDelay') return;
@@ -3846,6 +3846,232 @@ async function pickNotebookLanguage() {
     } catch (e) { status(String(e.message || e), 'err'); }
   });
 }
+/* Scrub a number: hold Alt and drag a number in a Python cell, or put the caret on it and press Alt+Up or Alt+Down.
+ * The text changes at once. A cell that is safe to run over and over (`scrub_ok`, nb/scrub.py) re-runs at most every
+ * 150 ms; the output it had before stays beside the new one as a ghost until the next ordinary run. */
+const leeScrubPx = 4, leeScrubGap = 150, leeScrubLimit = 1000, leeScrubIdle = 700;
+const leeScrubS = {drag: null, key: null, mouse: null, hint: null};
+
+//: Every number in `text` that a drag may change: not in a string or comment, not part of a name, not `1e5`, `0x1f`, `1_000` or `2j`.
+function leeScrubScan(text) {
+  const out = [], n = text.length;
+  for (let i = 0; i < n;) {
+    const c = text[i];
+    if (c === '#') { while (i < n && text[i] !== '\n') i++; continue; }
+    if (c === '"' || c === "'") {
+      const q = text.startsWith(c.repeat(3), i) ? c.repeat(3) : c;
+      for (i += q.length; i < n && !text.startsWith(q, i); i++) if (text[i] === '\\') i++; else if (q.length === 1 && text[i] === '\n') break;
+      i += q.length; continue;
+    }
+    if (/[A-Za-z_]/.test(c)) { while (i < n && /\w/.test(text[i])) i++; continue; }
+    if (!/\d/.test(c) && !(c === '.' && /\d/.test(text[i + 1] || ''))) { i++; continue; }
+    const m = /\d+\.?\d*|\.\d+/y; m.lastIndex = i;
+    const [tok] = m.exec(text), end = i + tok.length;
+    if (/[\w.]/.test(text[end] || '')) { i = end; while (i < n && /[\w.]/.test(text[i])) i++; continue; }
+    let j = i - 1; while (text[j] === ' ' || text[j] === '\t') j--;
+    let from = i, signed = false;
+    if (text[j] === '-') {
+      let k = j - 1; while (text[k] === ' ' || text[k] === '\t') k--;
+      if (k < 0 || /[\n=(,\[{:*\/+\-<>%&|^~!@;]/.test(text[k])) { from = j; signed = true; }
+    }
+    out.push({from, to: end, text: text.slice(from, end), signed}); i = end;
+  }
+  return out;
+}
+//: The number in `text` that `pos` is in or touches, or null.
+const leeScrubFind = (text, pos) => leeScrubScan(text).find(r => r.from <= pos && pos <= r.to) || null;
+
+//: What one step of a drag is worth: 1 for an integer, a tenth of the last decimal for a float, both raised as the number grows.
+function leeScrubUnit(v, floaty, d, fine) {
+  const mag = v ? Math.floor(Math.log10(Math.abs(v))) : null;
+  const u = floaty ? Math.max(10 ** -(d + 1), mag === null ? 0 : 10 ** (mag - 3)) : Math.max(1, mag === null ? 0 : 10 ** (mag - 2));
+  return fine ? (floaty ? u / 10 : Math.max(1, u / 10)) : u;
+}
+//: `text` moved by `n` steps. `fine` takes a tenth of a step; a number whose minus is not its own stops at 0.
+function leeScrubStep(text, n, fine = 0, signed = true) {
+  const floaty = text.includes('.'), d = floaty ? text.length - text.indexOf('.') - 1 : 0, v = parseFloat(text);
+  const u = leeScrubUnit(v, floaty, d, fine), next = v + n * u, dec = Math.min(8, Math.max(d, Math.round(-Math.log10(u))));
+  const s = (signed ? next : Math.max(0, next)).toFixed(dec);
+  return Number(s) === 0 ? s.replace('-', '') : s;
+}
+
+/* Runs `run(value)` for the newest pushed value, never two at once and never two starts less than `gap` ms apart; values
+ * pushed meanwhile are dropped but the last. A run that returns 'stop' ends the gate. `end()` resolves once the last value ran. */
+function leeScrubGate(run, gap = leeScrubGap) {
+  let has = false, pending, busy = false, last = -Infinity, dead = false, timer = 0;
+  const pump = async () => {
+    if (busy || !has || dead) return;
+    const wait = last + gap - Date.now();
+    if (wait > 0) { clearTimeout(timer); timer = setTimeout(pump, wait); return; }
+    const v = pending; has = false; busy = true; last = Date.now();
+    try { if (await run(v) === 'stop') dead = true; } catch (e) { dead = true; }
+    busy = false; pump();
+  };
+  return {
+    push(v) { pending = v; has = true; pump(); },
+    stop() { dead = true; clearTimeout(timer); },
+    get dead() { return dead; },
+    end: () => new Promise(res => { const t = setInterval(() => { if (!busy && (!has || dead)) { clearInterval(t); res(); } }, 10); }),
+  };
+}
+
+const leeScrubTx = view => view.state.update({}).constructor;
+//: Puts `text` over `from`..`to`. `silent` keeps it out of undo, which the ticks of a drag are; the end of it is the one undo step.
+function leeScrubPut(view, from, to, text, silent) {
+  const T = leeScrubTx(view);
+  view.dispatch({changes: {from, to, insert: text}, annotations: [T.userEvent.of('scrub'), ...(silent ? [T.addToHistory.of(false)] : [])]});
+}
+
+const leeScrubOn = () => typeof lee !== 'undefined' && lee.kind === 'notebook' && !lee.present && nbLang() === 'python';
+//: The code cell the event is in, its editor, and the number under the pointer, or null.
+function leeScrubUnder(e) {
+  if (!leeScrubOn()) return null;
+  const cell = e.target.closest?.('.lee-cell.code'), view = cell && lee.editors.get(cell.dataset.id); if (!view) return null;
+  const pos = view.posAtCoords({x: e.clientX, y: e.clientY}, false); if (pos == null) return null;
+  const lit = leeScrubFind(view.state.doc.toString(), pos); if (!lit) return null;
+  const a = view.coordsAtPos(lit.from), b = view.coordsAtPos(lit.to, -1);
+  if (!a || !b || e.clientY < a.top || e.clientY > a.bottom || e.clientX < a.left - 3 || e.clientX > Math.max(a.left, b.left) + 3) return null;
+  return {cell, id: cell.dataset.id, view, lit};
+}
+function leeScrubHint(view, lit) {
+  let h = leeScrubS.hint;
+  if (!lit) { h?.remove(); leeScrubS.hint = null; document.body.classList.remove('lee-scrub-armed'); return; }
+  const a = view.coordsAtPos(lit.from), b = view.coordsAtPos(lit.to, -1); if (!a || !b) return;
+  if (!h) { h = leeScrubS.hint = document.createElement('div'); h.className = 'lee-scrub-hint'; document.body.append(h); }
+  Object.assign(h.style, {left: a.left + 'px', top: a.bottom - 2 + 'px', width: Math.max(6, b.left - a.left) + 'px'});
+  document.body.classList.add('lee-scrub-armed');
+}
+
+//: The ghost: the cell's outputs from before the scrub, drawn dimmed after the live ones. Pictures overlay them; text goes beneath.
+const leeScrubDrawable = o => !(o.data && (o.data[WIDGET_MIME] != null || o.data[RUPAKA_MIME] != null || o.data[PLOTLY_MIME] != null));
+const leeScrubSig = outs => JSON.stringify((outs || []).map(o => o.output_type === 'stream' ? [o.name, o.text] : [o.output_type, o.data, o.ename, o.evalue]));
+function leeScrubGhost(c, before) {
+  const box = $('#out-' + c.id); if (!box) return;
+  let g = $('#ghost-' + c.id);
+  if (leeScrubSig(before) === leeScrubSig(c.outputs)) { g?.remove(); return; }
+  if (!g) { g = document.createElement('div'); g.id = 'ghost-' + c.id; box.after(g); }
+  g.className = 'lee-scrub-ghost'; g.setAttribute('aria-hidden', 'true'); g.textContent = '';
+  const inner = g.appendChild(document.createElement('div')); inner.className = 'lee-scrub-ghost-in';
+  (before || []).filter(leeScrubDrawable).forEach((o, i) => inner.append(outputEl(o, null, i)));
+  const media = !!inner.querySelector('img, svg, iframe, .lee-out-rich'), boxH = box.offsetHeight;
+  g.classList.toggle('overlay', media);
+  inner.style.top = media ? -boxH + 'px' : '';
+}
+//: Forget the ghost and the note of cell `id`: an ordinary run has come.
+function leeScrubClear(id) { $('#ghost-' + id)?.remove(); $('#note-' + id)?.remove(); }
+function leeScrubNote(id, text) {
+  let n = $('#note-' + id);
+  if (!text) return n?.remove();
+  if (!n) { n = document.createElement('div'); n.id = 'note-' + id; n.className = 'lee-scrub-note'; n.setAttribute('role', 'status'); $('#out-' + id)?.before(n); }
+  n.textContent = text;
+}
+
+/* One gesture on one cell: a drag, or a burst of arrow presses. It owns the gate, the ghost's baseline and the
+ * autosave hold, and checks once whether the cell may re-run. */
+function leeScrubOpen(view, id) {
+  const c = lee.cells.find(x => x.id === id), s = {view, id, before: JSON.parse(JSON.stringify(c?.outputs || [])), ok: false, ran: false};
+  lee.scrubbing = true; leeScrubClear(id);
+  s.gate = leeScrubGate(v => leeScrubRun(s));
+  s.check = post('/nb/scrub/check', {source: view.state.doc.toString()}).then(r => {
+    s.ok = !!r.ok; if (!r.ok) leeScrubNote(id, `Not re-running while you scrub: ${r.reason}. Run the cell yourself.`);
+    if (s.ok && s.want) s.gate.push(1);
+  }).catch(e => leeScrubNote(id, `Not re-running while you scrub: ${e.message || e}`));
+  return s;
+}
+//: A new text is in the editor: run it when the cell may.
+function leeScrubChanged(s) { s.want = true; if (s.ok) s.gate.push(1); }
+async function leeScrubRun(s) {
+  const i = lee.cells.findIndex(x => x.id === s.id), c = lee.cells[i];
+  if (!c || c.running) return;
+  let slow = false;
+  //: An interrupt that lands while the kernel is still starting is lost, so it is sent again until the run ends.
+  const stop = async () => { slow = true; try { if ((await post('/nb/interrupt', {path: lee.tabKey || '', id: s.id})).forced) kernelRestarted(); } catch (e) {} };
+  let again = 0; const timer = setTimeout(() => { stop(); again = setInterval(stop, leeScrubLimit); }, leeScrubLimit);
+  try { await runCell(i, false, {save: false, scrub: true}); } finally { clearTimeout(timer); clearInterval(again); }
+  if (slow) { leeScrubNote(s.id, 'Too slow to scrub: the run took more than 1 second and was stopped. Run the cell yourself.'); return 'stop'; }
+  s.ran = true; leeScrubGhost(lee.cells.find(x => x.id === s.id) || c, s.before);
+}
+async function leeScrubClose(s) {
+  await s.check; await s.gate.end();
+  if (leeScrubS.drag?.s === s) leeScrubS.drag = null; if (leeScrubS.key?.s === s) leeScrubS.key = null;
+  lee.scrubbing = false;
+  if (autoSaveEnabled()) scheduleAutoSave();
+}
+
+function leeScrubDragStart(e, t) {
+  e.preventDefault(); e.stopImmediatePropagation();
+  const s = leeScrubOpen(t.view, t.id), text = t.view.state.doc.toString();
+  selectCell(lee.cells.findIndex(x => x.id === t.id));
+  leeScrubS.drag = {s, lit: t.lit, orig: text, base: t.lit.text, cur: t.lit.text, x0: e.clientX, fine: e.shiftKey};
+  document.body.classList.add('lee-scrubbing');
+}
+function leeScrubDragMove(e) {
+  const d = leeScrubS.drag; if (!d) return;
+  if (e.shiftKey !== d.fine) { d.fine = e.shiftKey; d.base = d.cur; d.x0 = e.clientX; }
+  const text = leeScrubStep(d.base, Math.round((e.clientX - d.x0) / leeScrubPx), d.fine, d.lit.signed);
+  if (text === d.cur) return;
+  leeScrubPut(d.s.view, d.lit.from, d.lit.from + d.cur.length, text, true);
+  d.cur = text; leeScrubHint(d.s.view, {from: d.lit.from, to: d.lit.from + text.length});
+  leeScrubChanged(d.s);
+}
+//: The drag is over. `keep` false is Escape: the text goes back and nothing is undoable.
+function leeScrubDragEnd(keep) {
+  const d = leeScrubS.drag; if (!d) return;
+  document.body.classList.remove('lee-scrubbing'); leeScrubHint(null, null);
+  const {view} = d.s, lit = d.lit;
+  if (d.cur !== d.lit.text) {
+    leeScrubPut(view, lit.from, lit.from + d.cur.length, lit.text, true);
+    if (keep) leeScrubPut(view, lit.from, lit.to, d.cur, false);
+    else d.s.gate.stop();
+  }
+  const s = d.s; leeScrubS.drag = null;
+  if (keep && d.cur !== lit.text) LeeCM.focus(view);
+  return leeScrubClose(s);
+}
+
+//: Alt+Up or Alt+Down on a number moves it one step, Shift for a tenth of one.
+function leeScrubKey(e) {
+  if (!e.altKey || e.ctrlKey || e.metaKey || (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') || !leeScrubOn()) return;
+  const cell = e.target.closest?.('.lee-cell.code'), view = cell && lee.editors.get(cell.dataset.id);
+  if (!view || !view.hasFocus || !view.state.selection.main.empty) return;
+  const lit = leeScrubFind(view.state.doc.toString(), view.state.selection.main.head); if (!lit) return;
+  e.preventDefault(); e.stopImmediatePropagation();
+  let k = leeScrubS.key;
+  if (!k || k.s.id !== cell.dataset.id) k = leeScrubS.key = {s: leeScrubOpen(view, cell.dataset.id), timer: 0};
+  clearTimeout(k.timer); k.timer = setTimeout(() => leeScrubClose(k.s), leeScrubIdle);
+  const text = leeScrubStep(lit.text, e.key === 'ArrowUp' ? 1 : -1, e.shiftKey, lit.signed); if (text === lit.text) return;
+  const head = view.state.selection.main.head;
+  leeScrubPut(view, lit.from, lit.to, text, false);
+  view.dispatch({selection: {anchor: Math.min(head + text.length - lit.text.length, lit.from + text.length)}});
+  leeScrubChanged(k.s);
+}
+
+function leeScrubInstall() {
+  const hover = (m, alt) => {
+    if (leeScrubS.drag) return;
+    const t = alt && leeScrubUnder(m); leeScrubHint(t?.view, t?.lit);
+  };
+  window.addEventListener('pointermove', e => {
+    leeScrubS.mouse = {target: e.target, clientX: e.clientX, clientY: e.clientY};
+    if (leeScrubS.drag) leeScrubDragMove(e); else hover(e, e.altKey);
+  }, true);
+  window.addEventListener('pointerdown', e => {
+    if (e.button !== 0 || !e.altKey || leeScrubS.drag) return;
+    const t = leeScrubUnder(e); if (t) leeScrubDragStart(e, t);
+  }, true);
+  // The compatibility mouse events follow a cancelled pointerdown only in some engines, so the editor's own listener is shut out too.
+  window.addEventListener('mousedown', e => { if (leeScrubS.drag) { e.preventDefault(); e.stopImmediatePropagation(); } }, true);
+  window.addEventListener('pointerup', e => { if (leeScrubS.drag) leeScrubDragEnd(true); }, true);
+  window.addEventListener('pointercancel', () => leeScrubDragEnd(false), true);
+  window.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && leeScrubS.drag) { e.preventDefault(); e.stopImmediatePropagation(); leeScrubDragEnd(false); return; }
+    if (e.key === 'Alt' && leeScrubS.mouse) hover(leeScrubS.mouse, true);
+    leeScrubKey(e);
+  }, true);
+  window.addEventListener('keyup', e => { if (e.key === 'Alt' && !leeScrubS.drag) leeScrubHint(null, null); }, true);
+  window.addEventListener('blur', () => { if (!leeScrubS.drag) leeScrubHint(null, null); });
+}
+if (typeof document !== 'undefined' && typeof window.addEventListener === 'function') leeScrubInstall();
 //: The notebook and the agent, in both directions: tell the server which cell the person is on, ask the agent about it, hand a word to Learn, and come back to Code.
 const EXPLAIN_CELL = 'Explain what this cell does and, if it failed, why';
 let reportedCell = '', reportTimer = 0;
@@ -4706,7 +4932,7 @@ function applyOutputOps(outputs, {n, ops}) {
   for (const [k, kind, v] of ops) outs[k] = kind === 'append' ? {...outs[k], text: (outs[k]?.text || '') + v} : v;
   return outs;
 }
-async function runCell(i, advance, {save = true} = {}) {
+async function runCell(i, advance, {save = true, scrub = false} = {}) {
   // An edit still in flight (a confidence click) replaces the cells when it lands, and lands mid-save and refuses it.
   await lee.nbQueue;
   const c = lee.cells[i]; if (!c) return {ok: false, error: 'that cell is no longer in the notebook'};
@@ -4715,6 +4941,7 @@ async function runCell(i, advance, {save = true} = {}) {
     return {ok: false, error: `cell ${i + 1} is already running`};
   }
   const runKey = lee.tabKey, cellId = c.id;
+  if (!scrub) leeScrubClear(cellId);
   // The cell that runs, wherever an insert, move or delete above has put it since; null once its tab is not shown.
   const cur = () => lee.tabKey === runKey ? lee.cells.find(x => x.id === cellId) : null;
   let res = {ok: true, error: ''};
@@ -7288,3 +7515,162 @@ function copyVar(what) {
   status('copied ' + what, 'ok');
 }
 
+/* The run trace: each line of a cell with the values it made, one column per pass (Bret Victor's
+ * "Inventing on Principle"). `Trace this run` runs the selected cell once with a line tracer on, and a
+ * slider scrubs the steps of that one run: it marks the line in the editor and lists the names then. */
+const leeTraceCss = `
+.lee-varspanel.tracing > #vars, .lee-varspanel.tracing > .lee-filterbar { display: none; }
+.lee-varspanel > #tracebox { display: none; }
+.lee-varspanel.tracing > #tracebox { display: block; overflow: auto; flex: 1; min-height: 0; padding: 6px 8px; font: 11px/1.45 var(--lee-mono); color: var(--lee-fg); }
+#tracebox .lee-trhead { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 6px; font-family: var(--lee-sans); }
+#tracebox .lee-trnote { color: var(--lee-fg4); font-family: var(--lee-sans); font-size: 11px; }
+#tracebox .lee-trslide { display: flex; gap: 8px; align-items: center; margin: 4px 0 6px; }
+#tracebox .lee-trslide input { flex: 1; min-width: 0; }
+#tracebox .lee-trvals { border: 1px solid var(--lee-border); border-radius: 4px; padding: 4px 6px; margin-bottom: 6px; background: var(--lee-bg1); }
+#tracebox .lee-trval { display: flex; gap: 6px; align-items: center; white-space: nowrap; }
+#tracebox .lee-trval b { font-weight: 600; min-width: 4ch; }
+#tracebox .lee-trval span.v { overflow: hidden; text-overflow: ellipsis; max-width: 18ch; }
+#tracebox .lee-trval svg { flex: none; }
+#tracebox .lee-trrow { display: flex; border-top: 1px solid var(--lee-guide); }
+#tracebox .lee-trrow.cur { background: var(--lee-sel); }
+#tracebox .lee-trln { flex: none; width: 34ch; overflow: hidden; text-overflow: ellipsis; white-space: pre; padding-right: 6px; position: sticky; left: 0; background: var(--lee-bg); z-index: 1; }
+#tracebox .lee-trrow.cur .lee-trln { background: var(--lee-sel); }
+#tracebox .lee-trln i { color: var(--lee-fg4); font-style: normal; display: inline-block; width: 3ch; text-align: right; margin-right: 1ch; }
+#tracebox .lee-trits { display: flex; flex: none; }
+#tracebox .lee-trit { flex: none; width: 11ch; padding: 0 4px; border-left: 1px solid var(--lee-guide); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-height: 1.45em; }
+#tracebox .lee-trit.cur { outline: 1px solid var(--lee-accent); outline-offset: -1px; }
+#tracebox .lee-trit.chg b { color: var(--lee-accent); }
+#tracebox .lee-trit.skip { color: var(--lee-fg4); font-style: italic; }
+#tracebox .lee-trit s { color: var(--lee-fg4); opacity: .65; margin-right: .5ch; }
+#tracebox .lee-trscroll { overflow-x: auto; }
+#tracebox .lee-trerr { color: var(--lee-red); }
+`;
+function leeTraceStyle() {
+  if (document.getElementById('lee-trace-css')) return;
+  document.head.append(Object.assign(document.createElement('style'), {id: 'lee-trace-css', textContent: leeTraceCss}));
+}
+lee.trace = lee.trace || {model: null, id: null, step: 0, ok: null};
+
+function leeTraceSpark(series, step, w = 70, h = 14) {
+  const pts = (series?.points || []).filter(p => p.value != null);
+  if (!series?.numeric || pts.length < 2) return '';
+  const lo = Math.min(...pts.map(p => p.value)), hi = Math.max(...pts.map(p => p.value)), span = (hi - lo) || 1;
+  const x = i => 1 + i * (w - 2) / (pts.length - 1), y = v => h - 2 - (v - lo) * (h - 4) / span;
+  let at = -1; pts.forEach((p, i) => { if (p.step <= step) at = i; });
+  const d = pts.map((p, i) => `${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join(' ');
+  const dot = at >= 0 ? `<circle cx="${x(at).toFixed(1)}" cy="${y(pts[at].value).toFixed(1)}" r="2" fill="var(--lee-accent)"/>` : '';
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-label="timeline of ${esc(series.name)}"><polyline points="${d}" fill="none" stroke="var(--lee-fg4)" stroke-width="1"/>${dot}</svg>`;
+}
+
+function leeTraceCell(x, curStep) {
+  if (x.skip != null) return `<div class="lee-trit skip" title="${x.skip} passes not kept">⋯ ${x.skip}</div>`;
+  const names = Object.keys(x.values || {});
+  const body = names.map(n => {
+    const was = x.was && n in x.was ? `<s title="previous run">${esc(x.was[n] ?? '–')}</s>` : '';
+    return `<div title="${esc(n)} = ${esc(x.values[n])}">${was}<b>${esc(n)}</b>=${esc(x.values[n])}</div>`;
+  }).join('');
+  const cls = ['lee-trit', x.changed?.length ? 'chg' : '', x.step === curStep ? 'cur' : '', x.was && Object.keys(x.was).length ? 'diff' : ''].join(' ');
+  return `<div class="${cls}" data-step="${x.step}">${body || '<span class="lee-trnote">·</span>'}</div>`;
+}
+
+function leeTraceDraw() {
+  const box = $('#tracebox'), t = lee.trace, m = t.model; if (!box) return;
+  const head = `<div class="lee-trhead"><button class="lee-btn go" id="tracerun" onclick="leeTraceRun()">Trace this run</button>` +
+    `<span class="lee-trnote" id="tracenote"></span></div>`;
+  if (!m) { box.innerHTML = head + `<div class="lee-trnote">${t.why ? esc(t.why) : 'Select a code cell and press Trace this run. Each line then shows the values it made, one column for each pass.'}</div>`; return leeTraceNote(); }
+  const src = (m.source || '').split('\n'), curLine = m.states[t.step]?.line, curStep = m.states[t.step]?.step;
+  const rows = m.table.lines.map(r => `<div class="lee-trrow${r.line === curLine ? ' cur' : ''}" data-line="${r.line}">` +
+    `<div class="lee-trln" title="${esc(src[r.line - 1] || '')}"><i>${r.line}</i>${esc(src[r.line - 1] || '')}</div>` +
+    `<div class="lee-trits">${r.iterations.map(x => leeTraceCell(x, curStep)).join('')}</div></div>`).join('');
+  box.innerHTML = head +
+    `<div class="lee-trslide"><span class="lee-trnote">step</span><input type="range" id="tracestep" min="0" max="${Math.max(0, m.states.length - 1)}" value="${t.step}" oninput="leeTraceScrub(+this.value)" aria-label="scrub the steps of this run"><span class="lee-trnote" id="tracepos"></span></div>` +
+    `<div class="lee-trvals" id="tracevals"></div><div class="lee-trscroll" id="tracegrid">${rows}</div>`;
+  leeTraceNote(); leeTraceValues();
+}
+
+function leeTraceNote() {
+  const n = $('#tracenote'), t = lee.trace, m = t.model; if (!n) return;
+  if (!m) { n.textContent = ''; return; }
+  const bits = [`${m.table.steps} steps`];
+  if (m.truncated) bits.push(`cut short: ${m.reason || 'limit reached'}`);
+  if (m.has_prev) bits.push(m.table.diffs ? `${m.table.diffs} value${m.table.diffs === 1 ? '' : 's'} differ from the last run (old value struck through)` : 'same as the last run');
+  if (t.ok === false) bits.push('the cell raised an error');
+  n.textContent = bits.join(' · ');
+}
+
+function leeTraceValues() {
+  const t = lee.trace, m = t.model, s = m?.states[t.step], box = $('#tracevals'); if (!box || !s) return;
+  const names = Object.keys(s.values);
+  box.innerHTML = `<div class="lee-trnote">line ${s.line} · ${esc(s.event)}${s.depth > 1 ? ' · depth ' + s.depth : ''}${s.approx ? ' · approximate: passes were skipped' : ''}</div>` +
+    (names.map(n => `<div class="lee-trval"><b>${esc(n)}</b><span class="v" title="${esc(s.values[n])}">${esc(s.values[n])}</span>${leeTraceSpark(m.series[n], s.step)}</div>`).join('') || '<div class="lee-trnote">no names yet</div>');
+  const pos = $('#tracepos'); if (pos) pos.textContent = `${t.step + 1} / ${m.states.length}`;
+}
+
+function leeTraceMark(on = true) {
+  const t = lee.trace, view = t.id && lee.editors?.get(t.id); if (!view) return;
+  const s = t.model?.states[t.step];
+  if (!on || !s) { LeeCM.setDebugLine(view, 0); LeeCM.setInlineValues(view, []); return; }
+  const line = Math.min(s.line, view.state.doc.lines), text = view.state.doc.line(line).text;
+  const here = new Set(text.match(/[_A-Za-z]\w*/g) || []);
+  LeeCM.setDebugLine(view, line);
+  LeeCM.setInlineValues(view, Object.keys(s.values).filter(n => here.has(n)).map(n => ({line, name: n, value: s.values[n], type: ''})));
+}
+
+function leeTraceScrub(i) {
+  const t = lee.trace; if (!t.model) return;
+  t.step = Math.max(0, Math.min(i, t.model.states.length - 1));
+  const s = t.model.states[t.step];
+  $$('#tracebox .lee-trrow').forEach(r => r.classList.toggle('cur', +r.dataset.line === s.line));
+  $$('#tracebox .lee-trit').forEach(c => c.classList.toggle('cur', +c.dataset.step === s.step));
+  $('#tracebox .lee-trit.cur')?.scrollIntoView({block: 'nearest', inline: 'nearest'});
+  leeTraceValues(); leeTraceMark();
+}
+
+async function leeTraceRun() {
+  const i = lee.sel, c = lee.cells?.[i];
+  if (!c || c.cell_type !== 'code') return status('select a code cell to trace', 'err');
+  if (c.running) return status(`cell ${i + 1} is already running`, 'err');
+  await lee.nbQueue;
+  const runKey = lee.tabKey, id = c.id, v = ensureCellMounted(i), src = v ? LeeCM.getDoc(v) : c.source;
+  if (lee.path && $('.lee-tab.active.dirty') && !await saveTab(true)) return status('the notebook could not be saved first', 'err');
+  const btn = $('#tracerun'); if (btn) btn.disabled = true;
+  c.running = true; setCellState(c, 'running'); status(`tracing cell ${i + 1}…`);
+  try {
+    const r = await withPython(() => post('/vars/trace', {path: runKey, id, source: src, seq: nextSeq(), ...seenRow(runKey, id)}));
+    const at = lee.tabKey === runKey ? lee.cells.find(x => x.id === id) : null;
+    if (at) { Object.assign(at, r.cell); renderOutputs(at); cellOutputEvent(id, at.outputs || []); $('#g-' + id).textContent = '[' + (r.cell.execution_count ?? ' ') + ']'; setCellState(at, r.ok ? 'done' : 'error'); }
+    leeTraceShow(r.trace, id, r.ok);
+    status(r.ok ? `traced cell ${i + 1}: ${r.trace.table.steps} steps` : `cell ${i + 1} raised an error · its trace stops there`, r.ok ? 'ok' : 'err');
+  } catch (e) { status(String(e.message || e), 'err'); setCellState(c, 'error'); }
+  finally { c.running = false; if ($('#tracerun')) $('#tracerun').disabled = false; leeVars(); }
+}
+
+function leeTraceShow(model, id, ok = true) {
+  leeTraceMark(false);
+  Object.assign(lee.trace, {model, id, ok, step: Math.max(0, (model?.states?.length || 1) - 1), why: ''});
+  $('.lee-varspanel')?.classList.add('tracing'); $('#tracebtn')?.classList.add('active');
+  leeTraceDraw(); leeTraceMark();
+}
+
+async function leeTraceToggle() {
+  const panel = $('.lee-varspanel'); if (!panel) return;
+  leeTraceStyle();
+  if (!$('#tracebox')) panel.append(Object.assign(document.createElement('div'), {id: 'tracebox'}));
+  const on = !panel.classList.contains('tracing');
+  panel.classList.toggle('tracing', on); $('#tracebtn')?.classList.toggle('active', on);
+  if (!on) return leeTraceMark(false);
+  try { const s = await api('/vars/trace/support'); lee.trace.why = s.ok ? '' : `Tracing ${s.why}.`; lee.trace.can = !!s.ok; }
+  catch (e) { lee.trace.why = String(e.message || e); lee.trace.can = false; }
+  if (lee.trace.can && !lee.trace.model && lee.path && lee.cells?.[lee.sel]) {
+    try { const d = await api(`/vars/trace/last?path=${encodeURIComponent(lee.tabKey)}&id=${encodeURIComponent(lee.cells[lee.sel].id)}`); if (d.trace) { Object.assign(lee.trace, {model: d.trace, id: lee.cells[lee.sel].id, step: d.trace.states.length - 1}); } } catch (e) {}
+  }
+  leeTraceDraw(); leeTraceMark();
+  if (!lee.trace.can) { const b = $('#tracerun'); if (b) { b.disabled = true; b.title = lee.trace.why; } }
+}
+
+function leeTraceInit() {
+  const head = $('.lee-varspanel .lee-phead'); if (!head || $('#tracebtn')) return;
+  head.insertBefore(Object.assign(document.createElement('button'), {id: 'tracebtn', className: 'lee-seg', textContent: 'trace', title: 'run the selected cell and see the values of each line, pass by pass', onclick: leeTraceToggle}), head.querySelector('.lee-spacer'));
+}
+window.leeTraceRun = leeTraceRun; window.leeTraceScrub = leeTraceScrub; window.leeTraceToggle = leeTraceToggle; window.leeTraceShow = leeTraceShow;
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', leeTraceInit); else leeTraceInit();

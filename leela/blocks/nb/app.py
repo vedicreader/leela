@@ -17,6 +17,7 @@ from ...core.web import NOT_OBJECT, fail, json_obj, off_loop, sse
 from ..fs.fs import NotText, decoded
 from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
+from .scrub import scrub_why
 from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, OutFeed, RunningCellError, capped, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
 from .lesson import GUIDE_NEEDS, GUIDE_STREAM_NEEDS, EnvGone, check_anchors, check_demo, filed_picks, guide_board, lock, prediction_filing, record_card, record_prediction
@@ -232,6 +233,11 @@ def connect(app, ctx):
                 yield sse('error', {'text': errstr(e)})
         return StreamingResponse(events(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+    @rt('/nb/scrub/check')
+    async def nb_scrub_check(req):
+        "Whether a cell's source may re-run on every tick of a scrubbed number, and if not, why."
+        why = scrub_why((await req.json()).get('source') or '')
+        return {'ok': not why, 'reason': why}
     @rt('/nb/run/state')
     async def nb_run_state(req):
         "Whether one cell's run is still going, and the cell as the server holds it, for a page whose run stream ended early."

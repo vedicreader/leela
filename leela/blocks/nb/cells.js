@@ -780,7 +780,7 @@ function setTabSaveState(tab, state, detail = '') {
 }
 function scheduleAutoSave() {
   clearTimeout(lee.autoSaveTimer);
-  if (autoSaveMode() !== 'afterDelay' || !lee.path || lee.heldSaveConflicts.has(lee.path)) return;
+  if (lee.scrubbing || autoSaveMode() !== 'afterDelay' || !lee.path || lee.heldSaveConflicts.has(lee.path)) return;
   const version = lee.editVersion;
   lee.autoSaveTimer = setTimeout(async () => {
     if (autoSaveMode() !== 'afterDelay') return;

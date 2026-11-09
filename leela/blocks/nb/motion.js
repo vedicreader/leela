@@ -80,7 +80,7 @@ function applyOutputOps(outputs, {n, ops}) {
   for (const [k, kind, v] of ops) outs[k] = kind === 'append' ? {...outs[k], text: (outs[k]?.text || '') + v} : v;
   return outs;
 }
-async function runCell(i, advance, {save = true} = {}) {
+async function runCell(i, advance, {save = true, scrub = false} = {}) {
   // An edit still in flight (a confidence click) replaces the cells when it lands, and lands mid-save and refuses it.
   await lee.nbQueue;
   const c = lee.cells[i]; if (!c) return {ok: false, error: 'that cell is no longer in the notebook'};
@@ -89,6 +89,7 @@ async function runCell(i, advance, {save = true} = {}) {
     return {ok: false, error: `cell ${i + 1} is already running`};
   }
   const runKey = lee.tabKey, cellId = c.id;
+  if (!scrub) leeScrubClear(cellId);
   // The cell that runs, wherever an insert, move or delete above has put it since; null once its tab is not shown.
   const cur = () => lee.tabKey === runKey ? lee.cells.find(x => x.id === cellId) : null;
   let res = {ok: true, error: ''};
