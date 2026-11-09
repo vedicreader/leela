@@ -160,6 +160,60 @@ Focused tests must fail before behavior changes and pass afterward. Use `isolate
 
 After focused tests and peer review, run each full suite once on the final code. Record counts and failures. Provide a running isolated preview and copied-vault Mac-window check for owner acceptance. Main pushes, tags and publication still need separate exact-command approval.
 
+## Parity approach
+
+Acceptance is parity. Each Abhyasa surface must look and behave at least as well as it does in Abhyasa, in Leela's theme. S1 to S5 prove the integration: one agent session, the Learn tools, the Learn settings, the creation job and a Leela tab. The walk tab from S3 is new markup over `walk_state`. It does not meet parity, and no new markup of that kind is written.
+
+These facts were measured on 2026-11-09 in the `abhyasa-native-learn` worktree, with Abhyasa's own test fixtures and a temporary config.
+
+| Fact | Value |
+| --- | --- |
+| Routes that `mk_app` registers | 210 |
+| Paths that clash exactly with Leela | `/`, `/learn`, `/search`, `/settings` |
+| First segments shared with Leela, besides those | `/keys` |
+| Size of the step page in pane form (`/w/{jid}/1?pane=1`) | 11,278 bytes |
+| Scripts and stylesheets that page loads | 12 and 12 |
+| Local URLs in that page | 39 |
+| Rules on bare elements in `core/base.css` | 41 |
+| Theme variables in `core/themes.css` | 13 |
+
+Abhyasa builds each page inside a block's `connect(app, ctx)` closure. The context holds `learning`, `tutor`, `ask`, `transcribe`, `speech`, `speaker`, `pool`, `sessions`, `sources` and `research`. `StepPage` takes the walk, its `walk_state`, the concept map, and parts from other blocks through the hooks `step_needs`, `walk_actions`, `model_chip`, `check_show`, `check_stuck` and `answer_tools`. Reuse therefore runs Abhyasa's routes. No pure render function exists for a surface.
+
+`Page` in pane form (`pane=True` or `?pane=1`) has no nav, no crumbs and no gear. Its `<body>` sets `hx-boost="true"`. Its `<html>` sets `data-theme` and `data-mode` from Abhyasa's `look` settings. It loads its own htmx and `fasthtml.js` from `/vendor/`, and its block assets from `/assets/`. Its links go to `/w/{jid}/...`, `/v/store/...`, `/demo/ask`, `/keys`, `/settings/chip` and `/talk/new`.
+
+`mk_app` calls `hooks.clear()` and resets `RouteOverrides`. A second build in one process replaces the hooks of the first. Building the app starts a speech model download of 9 files and three worker threads: `speech_0`, `research_0` and the app pool. A host must give Abhyasa Leela's one transcribe function, so no second model loads.
+
+The proposed approach follows. It is not built, and it waits for the design audit and for agreement.
+
+1. Leela builds Abhyasa's app once, in its own process, over the Learn vault. It passes Leela's model router as `ask` and Leela's transcribe function as `transcribe`. Leela mounts the app as its last route, so every Leela route matches first. No second server, port or iframe exists.
+2. A Learn tab requests an Abhyasa page in pane form and puts the page's `<main>` into a container in the tab. The tab loads Abhyasa's stylesheets and scripts once.
+3. Abhyasa's stylesheets apply inside the container only. The pilot chooses between a shadow root and stylesheets with every selector prefixed by the container class. htmx and `walk.js` in a shadow root are not tested.
+4. The container sets Abhyasa's 13 theme variables from Leela tokens: `--bg` from `--lee-bg`, `--fg` from `--lee-fg`, `--line` and `--rule` from `--lee-border`, `--acc` from `--lee-accent`, `--mute` from `--lee-fg4`, `--ink2` from `--lee-fg2`, `--head` from `--lee-bg1`, `--bad` and `--no` from `--lee-log`, `--mono` from `--lee-mono`. `--ok` and `--serif` have no Leela token yet. Abhyasa's `look` setting does not apply in Leela.
+5. Inside the container, a boosted link or form swaps the container, not the document, and does not push a browser URL. Links to the four clashing paths and to `/keys` open the Leela equivalent.
+6. Leela's htmx 2.0.7 serves both. Abhyasa's own htmx copy does not load in Leela.
+
+The first-surface proof is the real `StepPage` of a fixture walk in a Leela tab, themed by Leela tokens, with an answered check. It is shown beside a screenshot of the same step in Abhyasa. It is not done.
+
+### Parity slices
+
+These slices replace S3 and S6 to S8 in the table below. S1, S2, S4, S5 and S5V stay. Each original screenshot comes from the design audit. The acceptance for every row is the same: the surface looks and behaves like the original, in Leela's theme, with Abhyasa's tests for that block passing.
+
+| Slice | Abhyasa surface | Abhyasa block |
+| --- | --- | --- |
+| P0 | The host: the in-process app, the tab container, the token map and link handling | `abhyasa/app.py`, `core/ui.py` |
+| P1 | Walk step with its check, feedback, hints and next | `walk` |
+| P2 | Walk page, plan and history | `walk` |
+| P3 | Today | `today` |
+| P4 | Course and concepts | `course`, `concepts` |
+| P5 | Strengths, history and profile | `strengths`, `history`, `profile` |
+| P6 | Graph | `graph` |
+| P7 | Demo and guide | `demo`, `guide` |
+| P8 | Talk and slides | `talk` |
+| P9 | Search and library | `search`, `add`, `sources` |
+| P10 | Builder behaviours through the Leela agent pane | `build` |
+| P11 | Voice through Leela's one speech path | `voice` |
+| P12 | Removal of the S3 walk tab markup and the old handoff pane | Leela `blocks/learn` |
+
 ## Delivery slices
 
 Files below define scope, not claims that new files already exist. Resolve exact extension symbols before editing. Use only the two native worktrees. Commit locally and do not push or release during slices.
