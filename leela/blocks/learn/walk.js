@@ -17,6 +17,50 @@ function learnBar(host) {
     {label: 'Keys', run: () => host.querySelector('[data-learn-keys]').click()},
     ...(host.querySelector('[data-learn-change]').hidden ? [] : [{label: 'Change with the builder', run: () => window.leeLearnChange?.()}])]);
 }
+function learnIdeas(btn, abh, go) {
+  "The Ideas (n) button: shown while the walk's outline is hidden; it lists the ideas as clones of the outline's own links."
+  let pop = null;
+  const rail = () => abh.querySelector('#rail'), rows = () => [...abh.querySelectorAll('#rail ol > li')];
+  const shut = (back = false) => {
+    document.removeEventListener('keydown', key, true); document.removeEventListener('pointerdown', away, true);
+    pop?.remove(); pop = null; btn.setAttribute('aria-expanded', 'false'); if (back) btn.focus();
+  };
+  const key = e => {
+    const as = pop ? [...pop.querySelectorAll('a')] : [], at = as.indexOf(document.activeElement), to = {ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: as.length - 1}[e.key];
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); shut(true); }
+    else if (to !== undefined && as.length) { e.preventDefault(); e.stopPropagation(); as[(to + as.length) % as.length].focus(); }
+  };
+  const away = e => { if (!pop?.contains(e.target) && !btn.contains(e.target)) shut(); };
+  const open = () => {
+    const ol = document.createElement('ol');
+    for (const r of rows()) {
+      const li = document.createElement('li'), a = r.querySelector('a');
+      if (!a) { li.className = 'sec'; li.textContent = r.textContent.trim(); ol.append(li); continue; }
+      const dot = [...r.classList].find(c => !['c', 'on', 'just'].includes(c)) || '', mark = r.querySelector('.k:not(.src-ready)')?.textContent.replace(/^[\s·]+/, '') || (dot === 'done' ? 'done' : '');
+      li.className = 'c ' + dot + (r.classList.contains('on') ? ' on' : '');
+      const link = a.cloneNode(true); link.removeAttribute('id'); if (r.classList.contains('on')) link.setAttribute('aria-current', 'step');
+      li.append(link, ...(mark ? [Object.assign(document.createElement('span'), {className: 'k', textContent: ' · ' + mark})] : []));
+      ol.append(li);
+    }
+    pop = Object.assign(document.createElement('div'), {className: 'lee-learn-ideas', tabIndex: -1});
+    pop.setAttribute('role', 'dialog'); pop.setAttribute('aria-label', 'Ideas of this walk');
+    pop.append(ol); document.body.append(pop);
+    const b = btn.getBoundingClientRect(), w = pop.getBoundingClientRect();
+    pop.style.left = Math.max(4, Math.min(b.left, innerWidth - w.width - 4)) + 'px'; pop.style.top = b.bottom + 3 + 'px'; pop.style.maxHeight = Math.max(120, innerHeight - b.bottom - 16) + 'px';
+    pop.onclick = e => { const a = e.target.closest('a[href]'); if (!a) return; e.preventDefault(); e.stopPropagation(); shut(); go(a.getAttribute('href')); };
+    btn.setAttribute('aria-expanded', 'true');
+    document.addEventListener('keydown', key, true); document.addEventListener('pointerdown', away, true);
+    (pop.querySelector('[aria-current]') || pop.querySelector('a') || pop).focus();
+  };
+  btn.onclick = () => pop ? shut(true) : open();
+  const sync = () => {
+    const n = rows().filter(r => r.querySelector('a')).length, r = rail();
+    btn.hidden = !(n && r && getComputedStyle(r).display === 'none'); btn.textContent = `Ideas (${n})`;
+    if (btn.hidden && pop) shut();
+  };
+  new ResizeObserver(sync).observe(abh); new MutationObserver(sync).observe(abh, {attributes: true, attributeFilter: ['class']});   // `wide` flips after the resize
+  return sync;
+}
 async function learnChips(host, path) {
   const html = await fetch(LEARN + '/nav/extra?path=' + encodeURIComponent(path)).then(r => r.ok ? r.text() : '').catch(() => ''), t = document.createElement('template');
   t.innerHTML = html;
@@ -116,7 +160,7 @@ async function learnMount(host, st) {
   if (!window.abhyasaGrip) await new Promise(ok => { const sc = document.createElement('script'); sc.src = '/learn/abh-grip.js'; sc.onload = sc.onerror = ok; document.head.append(sc); });
   const start = st.path || (st.walk ? '/w/' + encodeURIComponent(st.walk) + '/0' : '/');
   const bar = $('#modebar');
-  bar.innerHTML = '<button type="button" class="lee-btn" data-learn-back disabled>Back</button><span class="lee-learn-nav" role="group" aria-label="Learn"><button type="button" class="lee-btn" data-learn-home>Home</button></span><span class="lee-learn-chips" data-learn-chips></span><button type="button" class="lee-btn" data-learn-fit title="Hide the files and exec panels">Wide</button><button type="button" class="lee-btn" data-learn-keys title="The keys of Learn">Keys</button><button type="button" class="lee-btn" data-learn-ask title="Ask the agent about what you see (Ctrl+Opt+Shift+Cmd+E)">I don&#39;t get this</button><button type="button" class="lee-btn" data-learn-change hidden title="Change this walk with the agent">Change with the builder</button><button type="button" class="lee-btn lee-learn-more" data-learn-more aria-label="More" title="More">&#8943;</button>';
+  bar.innerHTML = '<button type="button" class="lee-btn" data-learn-back disabled>Back</button><span class="lee-learn-nav" role="group" aria-label="Learn"><button type="button" class="lee-btn" data-learn-home>Home</button></span><button type="button" class="lee-btn" data-learn-ideas aria-haspopup="dialog" aria-expanded="false" title="The ideas of this walk" hidden>Ideas</button><span class="lee-learn-chips" data-learn-chips></span><button type="button" class="lee-btn" data-learn-fit title="Hide the files and exec panels">Wide</button><button type="button" class="lee-btn" data-learn-keys title="The keys of Learn">Keys</button><button type="button" class="lee-btn" data-learn-ask title="Ask the agent about what you see (Ctrl+Opt+Shift+Cmd+E)">I don&#39;t get this</button><button type="button" class="lee-btn" data-learn-change hidden title="Change this walk with the agent">Change with the builder</button><button type="button" class="lee-btn lee-learn-more" data-learn-more aria-label="More" title="More">&#8943;</button>';
   host.innerHTML = '<div class="lee-learn-tab"><div class="abh" hx-push-url="false"></div></div>';
   window.leeLearnObs?.disconnect();
   const fit = bar.querySelector('[data-learn-fit]'), sync = () => {
@@ -144,6 +188,7 @@ async function learnMount(host, st) {
   for (const ev of ['htmx:responseError', 'htmx:sendError', 'htmx:swapError', 'htmx:targetError', 'htmx:sendAbort', 'htmx:timeout']) abh.addEventListener(ev, e => idle(e.detail.xhr));
   abh.addEventListener('htmx:afterRequest', e => { const x = e.detail.xhr; if (!e.detail.successful || x.status === 204 || x.status === 205) idle(x); });
   const own = u => u.pathname.startsWith('/build') ? () => window.leeLearnChange?.() : LEARN_OWN[u.pathname];
+  const ideas = learnIdeas(bar.querySelector('[data-learn-ideas]'), abh, h => { const u = new URL(h, location.origin); own(u) ? own(u)() : nav(u.pathname + u.search + u.hash); });
   const local = u => u.origin === location.origin && !/^\/(?:assets|vendor)\//.test(u.pathname);
   abh.addEventListener('click', e => {
     if (e.target.closest('[data-guide-open], #guide-go')) { e.preventDefault(); e.stopImmediatePropagation(); return window.leeLearnExplain?.(); }
@@ -189,7 +234,7 @@ async function learnMount(host, st) {
     path = path.replace(LEARN, '').replace(/([?&])pane=1&?/, '$1').replace(/[?&]$/, '') || '/';
     if (cur && path !== cur && !(pending?.goBack)) trail.push(cur);
     if (path !== cur) lee.learnPageSaved = fetch('/learn/tab/page', {method: 'POST', keepalive: true, headers: {'Content-Type': 'application/json'}, body: JSON.stringify({path})}).then(r => r.text()).catch(() => {});
-    cur = path; pending = null; learnChips(bar, cur);
+    cur = path; pending = null; learnChips(bar, cur); ideas();
     lee.learnPage = cur; paintAgentAttachments(false);
     const find = bar.querySelector('.lee-learn-find input'); if (find) find.value = /^\/search\?/.test(cur) ? new URLSearchParams(cur.split('?')[1]).get('q') || '' : ''; back.disabled = !trail.length; change.hidden = !/^\/w\//.test(cur);
     const main = abh.querySelector('main');

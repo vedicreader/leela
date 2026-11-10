@@ -28,3 +28,13 @@ a.lee-learn-chip:hover { color: var(--lee-fg); border-color: var(--lee-accent); 
 .abh .modes-pick input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .abh .modes-pick { display: flex; gap: var(--s2, 6px); margin: var(--s3, 10px) calc(-1 * var(--s3, 10px)) 0; }
 .abh .kf-pill { display: none; }
+.lee-learn-ideas { position: fixed; z-index: 60; box-sizing: border-box; width: max-content; min-width: 220px; max-width: min(360px, 92vw); overflow: auto; overscroll-behavior: contain; padding: 6px; border: 1px solid var(--lee-border); border-radius: 7px; background: var(--lee-bg1); box-shadow: 0 14px 34px rgba(0,0,0,.38); font: 13px/1.4 var(--lee-sans); outline: none; }
+.lee-learn-ideas ol { margin: 0; padding: 0; list-style: none; }
+.lee-learn-ideas li { padding: 0; margin: 0; color: var(--lee-fg4); }
+.lee-learn-ideas li.sec { padding: 8px 8px 2px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; }
+.lee-learn-ideas li a { display: inline-block; max-width: 100%; padding: 4px 8px; border-radius: 4px; color: var(--lee-fg2); text-decoration: none; }
+.lee-learn-ideas li a:hover, .lee-learn-ideas li a:focus-visible { background: var(--lee-sel); color: var(--lee-fg); outline: none; }
+.lee-learn-ideas li.on a { color: var(--lee-fg); font-weight: 600; }
+.lee-learn-ideas li.done a, .lee-learn-ideas li.known a { color: var(--lee-fg4); }
+.lee-learn-ideas li.skipped a { text-decoration: line-through; }
+.lee-learn-ideas .k { font-size: 11px; font-style: italic; }
