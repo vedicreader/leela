@@ -124,6 +124,7 @@ def test_notes_with_no_step_waiting_are_refused(tmp_path, fake):
 
 def test_a_changelog_with_the_entry_skips_the_box_and_runs_with_the_three_flags(tmp_path, fake):
     root = project(tmp_path, f'# Release notes\n\n{MARK}\n## 0.2.0\n\n- done\n\n## 0.1.0\n\n- old\n')
+    (root/'settings.ini').write_text((root/'settings.ini').read_text() + '# changed\n')   # pullup 0.0.14 runs nbdev-release-git on a clean tree
     with served(tmp_path) as client:
         act(client, root, op='start', step='gh', auto=False)
         st = wait(client, root)

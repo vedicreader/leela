@@ -16,15 +16,15 @@ classifiers = [
 ]
 # Everything leela imports, and nothing it does not: a transitive is not a contract.
 dependencies = [
-    "ramabana[cli]>=0.2.112",   # 0.2.112 needs uraiyadal 0.0.22; a stop fails only the asks its turn ran, and a typed prompt no longer ends work together mode
+    "ramabana[cli]>=0.2.114",   # 0.2.114 peer tools and the image model; 0.2.112 needs uraiyadal 0.0.22; a stop fails only the asks its turn ran, and a typed prompt no longer ends work together mode
     "abhyasa>=0.0.16",   # the tutor of the screen guide; its board is rupaka's
     "rupaka>=0.0.15",   # the screen guide's board (rupaka.board); lee-rupaka.js and lee-rupaka.css are written from this version
-    "shalya>=0.1.32",   # 0.1.32 ASK_TOOLS and arg_write; 0.1.31 own_python and OwnPythonHost
+    "shalya>=0.1.33",   # 0.1.33 raised with ramabana 0.2.114; 0.1.32 ASK_TOOLS and arg_write; 0.1.31 own_python and OwnPythonHost
     "gheasy>=0.0.21",
     "fastcore>=1.7.0",
     "kavacha>=0.0.21",
     "kunda>=0.0.15",   # 0.0.15 inspector on a free port; 0.0.14 make_venv, and python_for borrows from roots only when asked; 0.0.12 ends a run whose kernel shell stopped answering, and warns about ipykernel 7.0 to 7.3
-    "pullup>=0.0.12",
+    "pullup>=0.0.14",   # 0.0.14 release notes gate fix
     "exhash>=0.4.10",
     "fossick>=0.1.26",
     "ipykernel>=7.4.0",
