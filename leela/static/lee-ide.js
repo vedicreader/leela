@@ -2559,7 +2559,7 @@ async function loadBuilder(file = '') {
   renderWorkflowsPanel();
 }
 
-const REL_MARK = {passed: '✓', failed: '✗', running: '•', skipped: '⤼', pending: '·'};
+const REL_MARK = {passed: '✓', failed: '✗', running: '•', skipped: '⤼', pending: '·', needs_notes: '✎'};
 // The server rewrote the path to the checkout in this workspace, so "open" arrives in the
 // repository rather than in a copy under .venv that the next sync overwrites.
 function blameRow(b) {
@@ -2601,12 +2601,47 @@ function relStepRow(s, d) {
     `<b>${REL_MARK[s.status] || '·'}</b>` +
     `<div><strong>${esc(s.label)}</strong><code>${esc(s.cmd)}</code>` +
     `<small>${esc(s.doc || '')}${s.code !== null && s.code !== undefined ? ` · exit ${s.code}` : ''}</small>` +
+    `${s.status === 'needs_notes' ? '<i class="warn">needs release notes</i>' : ''}` +
     `${s.missing.length ? `<i class="warn">needs ${s.missing.map(esc).join(', ')}</i>` : ''}</div>` +
     `<span class="lee-rel-actions">` +
     `${s.status === 'running' ? '<button data-rel="stop">stop</button>' :
       `<button data-rel="step" ${busy ? 'disabled' : ''} title="run only this step">run</button>` +
-      `${s.status === 'failed' ? `<button data-rel="start" ${busy ? 'disabled' : ''} title="retry, then continue">retry</button><button data-rel="skip" title="mark done without running">skip</button>` : ''}`}` +
+      `${s.status === 'failed' ? `<button data-rel="start" ${busy ? 'disabled' : ''} title="retry, then continue">retry</button><button data-rel="skip" title="mark done without running">skip</button>` : ''}` +
+      `${s.status === 'needs_notes' ? `<button data-rel-notes title="write the release notes">notes</button><button data-rel="skip" title="mark done without running">skip</button>` : ''}`}` +
     `</span></article>`;
+}
+// A release step that has no notes does not run. The box asks for them, and Save runs the step.
+function relNotesBox(d) {
+  const n = d.notes;
+  if (!n || relUI.noteHide === n.version) return '';
+  return `<form class="lee-rel-notes"><label for="relnotes"><strong>Release notes for ${esc(n.version)}</strong>` +
+    `<span>Write what changed in this version. The notes go in CHANGELOG.md and on the GitHub release.</span></label>` +
+    `<textarea id="relnotes" rows="6" spellcheck="false" placeholder="- Fix the login error">${esc(relUI.draft || '')}</textarea>` +
+    `${relUI.noteErr ? `<p class="lee-rel-err">${esc(relUI.noteErr)}</p>` : ''}` +
+    `<div class="lee-rel-notes-foot"><button type="submit" ${relUI.noteBusy ? 'disabled' : ''}>Save and release</button>` +
+    `<button type="button" data-notes-cancel>Cancel</button></div></form>`;
+}
+async function saveNotes() {
+  const text = (relUI.draft || '').trim();
+  if (!text) { relUI.noteErr = 'Write the release notes first.'; return renderReleasesPanel(); }
+  relUI.noteBusy = true; relUI.noteErr = ''; renderReleasesPanel();
+  try {
+    relUI.data = await post('/releases/action', {op: 'notes', repo: projectRepo(), text});
+    relUI.draft = ''; relUI.noteHide = '';
+    await openReleaseTerm(relUI.data.root, 'release');
+  } catch (e) { relUI.noteErr = e.message || String(e); }
+  relUI.noteBusy = false;
+  renderReleasesPanel();
+}
+function wireNotes(host, d) {
+  const form = host.querySelector('.lee-rel-notes'), ta = form?.querySelector('textarea');
+  if (form) {
+    ta.oninput = () => { relUI.draft = ta.value; };
+    form.querySelector('[data-notes-cancel]').onclick = () => { relUI.noteHide = d.notes.version; relUI.noteErr = ''; renderReleasesPanel(); };
+    form.onsubmit = e => { e.preventDefault(); saveNotes(); };
+    if (relUI.noteFocus !== d.notes.version) { relUI.noteFocus = d.notes.version; ta.focus(); }
+  }
+  host.querySelectorAll('[data-rel-notes]').forEach(b => b.onclick = () => { relUI.noteHide = ''; relUI.noteFocus = ''; renderReleasesPanel(); });
 }
 function renderReleasesPanel() {
   const host = $('#releasespanel'); if (!host) return;
@@ -2617,15 +2652,16 @@ function renderReleasesPanel() {
     `<header class="lee-sc-branch"><div><strong>${esc(d.root.split('/').pop())}</strong>` +
     `<span>${d.flow || (d.nbdev ? 'nbdev' : 'plain')} project${d.app ? ' + desktop app' : ''} · ${done}/${d.steps.length} done${d.configured ? ' · .leela/release.json' : ' · default pipeline'}</span></div></header>` +
     `<div class="lee-sc-actions">` +
-    `${d.running ? '<button data-rel-top="stop" class="warn">stop</button>' : `<button data-rel-top="start">${d.failed ? 'continue' : 'run release'}</button>`}` +
+    `${d.running ? '<button data-rel-top="stop" class="warn">stop</button>' : `<button data-rel-top="start">${d.failed || d.notes ? 'continue' : 'run release'}</button>`}` +
     `<button data-rel-top="terminal">terminal</button><button data-rel-top="env">environment</button><button data-rel-top="reset" ${d.running ? 'disabled' : ''}>reset</button>` +
     `<button data-rel-top="edit">edit steps</button>${d.configured ? '<button data-rel-top="defaults">defaults</button>' : ''}</div>` +
     `${d.failed ? `<div class="lee-wf-note"><strong>${esc(d.failed)} failed</strong><span>Its output is in the release terminal. Fix and retry, or skip it deliberately.</span></div>` : ''}` +
-    blameRow(d.blame) +
+    blameRow(d.blame) + relNotesBox(d) +
     `<div class="lee-rel-steps">${d.steps.map(s => relStepRow(s, d)).join('')}</div>` +
     `${d.needs.length ? `<div class="lee-rel-needs"><strong>needs</strong>${d.needs.map(k => `<i>${esc(k)}</i>`).join('')}<button data-rel-top="env">environment…</button></div>` : ''}`;
   wireReleasesPanel(host, d);
   wireBlame(host);
+  wireNotes(host, d);
   relPoll(d);
 }
 function wireReleasesPanel(host, d) {

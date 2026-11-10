@@ -114,15 +114,18 @@ def connect(app, ctx):
         live[key].python = step_python(ctx.session, root, make)
         return live[key]
     async def act(kind, d):
-        "One explicit move: start, retry a step, skip it, stop, forget, or edit the plan."
+        "One explicit move: start, retry a step, save its release notes, skip it, stop, forget, or edit the plan."
         op, target = str(d.get('op') or ''), d.get('repo') or ''
-        p = await off_loop(pipeline, kind, target, op in ('start', 'step'))
+        p = await off_loop(pipeline, kind, target, op in ('start', 'step', 'notes'))
         if op == 'scaffold' and kind == 'deploy':
             out = await off_loop(p.scaffold, d.get('domain') or '', d.get('subdomain') or '',
                 d.get('app') or '', bool(d.get('force')), d.get('second_host') or '')
             return out | {'state': state(kind, target)}
         if op == 'start': await p.start(d.get('step') or '', bool(d.get('auto', True)))
         elif op == 'step': await p.start(d.get('step') or '', False)
+        elif op == 'notes':
+            if kind != 'release': raise PipelineError('Only a release has release notes.')
+            await p.start(await off_loop(p.save_notes, d.get('text') or ''), True)
         elif op == 'stop': p.stop()
         elif op == 'skip': p.skip(d.get('step') or '')
         elif op == 'reset': p.reset()
