@@ -4166,3 +4166,9 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
 .lee-create-say { min-height: 1.4em; margin: 0 0 6px; }
 .lee-create-say.err { color: var(--lee-red); }
 .lee-create-stage .lee-rupaka { display: block; }
+
+/* The side pane: a notebook's cells and a Markdown stage size to their content, and the pane scrolls. */
+.lee-editor-secondary .lee-split-body .lee-cm, .lee-editor-secondary .lee-md-stage .lee-cm { height: auto; }
+.lee-editor-secondary .lee-md-stage { padding: 0 8px 8px; }
+.lee-split-body [data-side-more] { margin: 8px 0 8px 52px; }
+.lee-nbv-out { min-width: 0; }

@@ -509,6 +509,7 @@ def connect(app, ctx):
         d = await req.json()
         tab, nb, _ = run_owner(d)
         if nb is None: return fail('that notebook is no longer open' if d.get('path') else 'no notebook open')
+        if d.get('side') and tab.path and ctx.fs.read_only(tab.path): return fail(f'{Path(tab.path).name} is read-only')
         clash = nb.take_sources(d.get('sources', []), store.seqs_for(tab))
         tab.dirty = tab.dirty or nb.dirty or bool(clash)
         if (gone := by_id(nb, d)): return fail(gone, 409)

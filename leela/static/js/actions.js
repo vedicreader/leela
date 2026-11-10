@@ -138,6 +138,8 @@ const ACTIONS = {
   cell_cut: () => cutCell(lee.sel),
   cell_paste_above: () => pasteCell(lee.sel),
   cell_paste_below: () => pasteCell(belowAt(lee.sel)),
+  cell_to_other: () => cellToOther(),
+  open_side: () => leeOpenSide(clipTarget()),
   cell_merge_above: async () => {
     const at = lee.sel; if (at < 1) return status('there is no cell above', 'err');
     if (!await nbEdit({op: 'merge_above', i: at})) return;

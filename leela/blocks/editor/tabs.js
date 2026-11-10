@@ -125,6 +125,7 @@ async function mountTab(expectedPath = '') {
   const host = $('#editor'); if (!host) return;
   lee.kind = st.kind; lee.path = st.path || ''; lee.learnPage = ''; lee.tabKey = st.path || st.title || ''; lee.cells = st.cells || [];
   lee.rise = st.rise || {};
+  lee.readOnly = !!st.read_only;
   bindTabHandlers(st.kind, host);
   window.leeFolderOffer?.(st);
   paintTitle();

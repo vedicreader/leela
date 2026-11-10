@@ -1397,6 +1397,8 @@ const ACTIONS = {
   cell_cut: () => cutCell(lee.sel),
   cell_paste_above: () => pasteCell(lee.sel),
   cell_paste_below: () => pasteCell(belowAt(lee.sel)),
+  cell_to_other: () => cellToOther(),
+  open_side: () => leeOpenSide(clipTarget()),
   cell_merge_above: async () => {
     const at = lee.sel; if (at < 1) return status('there is no cell above', 'err');
     if (!await nbEdit({op: 'merge_above', i: at})) return;
@@ -2133,6 +2135,7 @@ async function mountTab(expectedPath = '') {
   const host = $('#editor'); if (!host) return;
   lee.kind = st.kind; lee.path = st.path || ''; lee.learnPage = ''; lee.tabKey = st.path || st.title || ''; lee.cells = st.cells || [];
   lee.rise = st.rise || {};
+  lee.readOnly = !!st.read_only;
   bindTabHandlers(st.kind, host);
   window.leeFolderOffer?.(st);
   paintTitle();
@@ -2291,9 +2294,6 @@ function learnBar(host) {
     {label: 'Keys', run: () => host.querySelector('[data-learn-keys]').click()},
     ...(host.querySelector('[data-learn-change]').hidden ? [] : [{label: 'Change with the builder', run: () => window.leeLearnChange?.()}])]);
 }
-async function learnChips(host, path) {
-  const html = await fetch(LEARN + '/nav/extra?path=' + encodeURIComponent(path)).then(r => r.ok ? r.text() : '').catch(() => ''), t = document.createElement('template');
-  t.innerHTML = html;
 function learnIdeas(btn, abh, go) {
   "The Ideas (n) button: shown while the walk's outline is hidden; it lists the ideas as clones of the outline's own links."
   let pop = null;
@@ -2338,6 +2338,9 @@ function learnIdeas(btn, abh, go) {
   new ResizeObserver(sync).observe(abh); new MutationObserver(sync).observe(abh, {attributes: true, attributeFilter: ['class']});   // `wide` flips after the resize
   return sync;
 }
+async function learnChips(host, path) {
+  const html = await fetch(LEARN + '/nav/extra?path=' + encodeURIComponent(path)).then(r => r.ok ? r.text() : '').catch(() => ''), t = document.createElement('template');
+  t.innerHTML = html;
   const go = t.content.querySelector('#continue'), job = t.content.querySelector('#activity'), s = job?.querySelector('summary'), l = job?.querySelector('.activity-list a[href]');
   go?.classList.add('lee-learn-chip');
   host.querySelector('[data-learn-chips]')?.replaceChildren(...[go, s && Object.assign(document.createElement(l ? 'a' : 'span'), {className: 'lee-learn-chip', textContent: s.textContent.trim()}, l ? {href: l.getAttribute('href')} : {})].filter(Boolean));
@@ -2462,10 +2465,10 @@ async function learnMount(host, st) {
   for (const ev of ['htmx:responseError', 'htmx:sendError', 'htmx:swapError', 'htmx:targetError', 'htmx:sendAbort', 'htmx:timeout']) abh.addEventListener(ev, e => idle(e.detail.xhr));
   abh.addEventListener('htmx:afterRequest', e => { const x = e.detail.xhr; if (!e.detail.successful || x.status === 204 || x.status === 205) idle(x); });
   const own = u => u.pathname.startsWith('/build') ? () => window.leeLearnChange?.() : LEARN_OWN[u.pathname];
+  const ideas = learnIdeas(bar.querySelector('[data-learn-ideas]'), abh, h => { const u = new URL(h, location.origin); own(u) ? own(u)() : nav(u.pathname + u.search + u.hash); });
   const local = u => u.origin === location.origin && !/^\/(?:assets|vendor)\//.test(u.pathname);
   abh.addEventListener('click', e => {
     if (e.target.closest('[data-guide-open], #guide-go')) { e.preventDefault(); e.stopImmediatePropagation(); return window.leeLearnExplain?.(); }
-  const ideas = learnIdeas(bar.querySelector('[data-learn-ideas]'), abh, h => { const u = new URL(h, location.origin); own(u) ? own(u)() : nav(u.pathname + u.search + u.hash); });
     const code = e.target.closest('[data-act^=open-leela], .leela-open, .leela-line a');
     if (code && window.leeOpenInCode) { e.preventDefault(); e.stopImmediatePropagation(); return leeOpenInCode(code); }
     const a = e.target.closest('a[href]');
@@ -2615,6 +2618,31 @@ async function adoptMdView() {
   await prefAdopt('workbench', 'markdownView', 'lee-md-view', v => MD_PREFS[v] || 'split');
 }
 
+//: A Markdown file keeps its view in its own key, so a tab comes back as it was left. `dflt` is for a file with none.
+const mdViewOf = (path, dflt) => { try { const v = localStorage.getItem('lee-md-view:' + path); return ['edit', 'split', 'rendered'].includes(v) ? v : dflt; } catch (_) { return dflt; } };
+const mdViewKeep = (path, v) => { try { localStorage.setItem('lee-md-view:' + path, v); } catch (_) {} };
+function mdShell(path, view, ids, note = '') {
+  "The view switch and the stage of a Markdown file: its editor and its rendered copy. `ids` names the three nodes, so two panes never share one."
+  return `<div class="lee-doc-head lee-md-bar"><div class="lee-segbar" id="${ids.bar}" aria-label="markdown view">` +
+    ['edit', 'split', 'rendered'].map(v => `<button class="lee-seg${v === view ? ' active' : ''}" data-md-view="${v}">${v}</button>`).join('') +
+    `</div><span class="lee-spacer"></span>${note ? `<span class="lee-dim">${note}</span>` : ''}</div>` +
+    // `data-md-base` is this file's folder: a figure written `![](img/a.png)` is relative to the document, not to the page.
+    `<div class="lee-md-stage" data-view="${view}" data-md-base="${esc((path || '').slice(0, (path || '').lastIndexOf('/')))}">` +
+    `<div class="lee-cm" id="${ids.cm}"></div><div class="lee-md-preview" id="${ids.preview}" data-markdown=""></div></div>`;
+}
+function mdWire(bar, view, path, onPick) {
+  "Make the view switch in `bar` change its stage, remember the choice for `path`, and tell `onPick` the new view."
+  bar.onclick = e => {
+    const b = e.target.closest('[data-md-view]'); if (!b) return;
+    const next = b.dataset.mdView;
+    bar.parentElement.nextElementSibling.dataset.view = next;
+    $$('.lee-seg', bar).forEach(x => x.classList.toggle('active', x === b));
+    mdViewKeep(path, next); onPick?.(next);
+    // The editor was display:none a moment ago, so CodeMirror has stale measurements and draws the cursor in the wrong place until it re-measures.
+    if (next !== 'rendered') requestAnimationFrame(() => LeeCM.focus(view));
+  };
+}
+
 const lspAnswers = new Map();
 function paintCrumbSymbols(d) {
   const el = $('#editorcrumbs'); if (!el) return;
@@ -2657,18 +2685,9 @@ async function mountFile(host, st) {
   // reaching `lee.editors.get('file')`.
   const isMd = (st.lang || '') === 'markdown';
   if (isMd) await adoptMdView();
-  const view = isMd ? (MD_VIEWS[prefGet('workbench', 'markdownView', 'source')] || 'split') : '';
+  const view = isMd ? mdViewOf(st.path, MD_VIEWS[prefGet('workbench', 'markdownView', 'source')] || 'split') : '';
   host.innerHTML = crumb + (isProject ? '<div class="lee-package-summary" id="packagebar" hidden></div>' : '') +
-    (isMd ? `<div class="lee-doc-head lee-md-bar"><div class="lee-segbar" id="mdview" aria-label="markdown view">` +
-            ['edit', 'split', 'rendered'].map(v =>
-              `<button class="lee-seg${v === view ? ' active' : ''}" data-md-view="${v}">${v}</button>`).join('') +
-            `</div><span class="lee-spacer"></span>` +
-            `<span class="lee-dim">the change gutter and blame stay on the source</span></div>` : '') +
-    // `data-md-base` is this file's folder: a figure written `![](img/a.png)` is relative to the
-    // document, not to the page the renderer drops it into.
-    (isMd ? `<div class="lee-md-stage" data-view="${view}" data-md-base="${esc((st.path || '').slice(0, (st.path || '').lastIndexOf('/')))}">` +
-            `<div class="lee-cm" id="filecm"></div>` +
-            `<div class="lee-md-preview" id="mdpreview" data-markdown=""></div></div>`
+    (isMd ? mdShell(st.path, view, {bar: 'mdview', cm: 'filecm', preview: 'mdpreview'}, 'the change gutter and blame stay on the source')
           : '<div class="lee-cm" id="filecm"></div>');
   if (st.note) host.insertAdjacentHTML('afterbegin', `<div class="lee-doc-head lee-readonly-note" role="note">${esc(st.note)}</div>`);
   // Nothing in the editor depends on these two answers, and awaiting them held an empty box on
@@ -2703,16 +2722,7 @@ async function mountFile(host, st) {
     // by line. Only this first render is annotated. See `paintMarkdownFileChanges`.
     renderMarkdown($('#mdpreview'), LeeCM.getDoc(v), false,
                    el => { paintMarkdownFileChanges(el, git.ranges || []); rupakaFences(el, `file:${key}`); });
-    $('#mdview').onclick = e => {
-      const b = e.target.closest('[data-md-view]'); if (!b) return;
-      const next = b.dataset.mdView;
-      prefSet('workbench', 'markdownView', MD_PREFS[next] || 'split');
-      $('.lee-md-stage').dataset.view = next;
-      $$('#mdview .lee-seg').forEach(x => x.classList.toggle('active', x === b));
-      // The editor was display:none a moment ago, so CodeMirror has stale measurements and draws
-      // the cursor in the wrong place until it re-measures.
-      if (next !== 'rendered') requestAnimationFrame(() => LeeCM.focus(v));
-    };
+    mdWire($('#mdview'), v, st.path, next => prefSet('workbench', 'markdownView', MD_PREFS[next] || 'split'));
   }
   const mine = ++fileExtrasVersion;
   lspExtras(v, st, crumbMode, mine, lee.dirtyBuffers.has(key));
@@ -2732,41 +2742,146 @@ async function mountFile(host, st) {
   $('#filecm').addEventListener('focusin', () => { lee.activeEditor='primary'; setScope('editor'); });
 }
 
-/* What the second pane can hold. A notebook goes in as a reading copy: its cells are what a person
-   compares across a merge, and the editors, the kernel and the selection all belong to one notebook
-   at a time. The live surfaces are bound to the pane they were opened in and are not offered. */
-const SPLIT_KINDS = {text: 'editable', notebook: 'reading copy', pdf: 'view', image: 'view', office: 'view'};
+/* What the second pane can hold. A notebook goes in as a notebook to read and copy from: rendered
+   Markdown, highlighted code, its outputs, and a copy action on each cell. It has no editor, no
+   kernel and no run, so a read-only notebook shows the same; `swap panes` makes it the main one. */
+const SPLIT_KINDS = {text: 'editable', notebook: 'notebook', pdf: 'view', image: 'view', office: 'view'};
+const SIDE_CAP = 150;   //: cells drawn at first; a button draws the next ones
 
-function secondaryNotebook(host, st) {
-  "The cells of a notebook, to read beside something else. No editors, no outputs, no execution."
-  const cells = (st.cells || []).map((c, i) =>
-    `<article class="lee-split-cell ${esc(c.cell_type)}"><header>${i + 1} · ${esc(c.cell_type)}` +
-    `${c.execution_count != null ? ` · [${esc(String(c.execution_count))}]` : ''}</header>` +
-    `<pre>${esc(String(c.source || ''))}</pre></article>`).join('');
-  host.querySelector('.lee-split-body').innerHTML =
-    cells || '<div class="lee-dim">this notebook has no cells</div>';
+function sideClear() {
+  "Drop the side pane's lazy editors and the observer that builds them."
+  lee.sideObserver?.disconnect(); lee.sideObserver = null;
+  for (const v of lee.sideViews || []) try { LeeCM.destroy(v); } catch (_) {}
+  lee.sideViews = []; lee.sideNb = null;
+}
+const sidePayload = c => ({...JSON.parse(JSON.stringify(c)), running: false, fresh: false});
+//: A cell's outputs as the text a person would paste.
+const sideOutText = c => (c.outputs || []).map(o => o.output_type === 'stream' ? mimeText(o.text)
+  : o.output_type === 'error' ? stripAnsi((o.traceback || []).join('\n')) || `${o.ename}: ${o.evalue}`
+  : mimeText(o.data?.['text/plain']) ?? mimeText(o.data?.['text/markdown']) ?? '').filter(Boolean).join('\n');
+function sideOutEl(o, i) {
+  const data = o.data || {};
+  // A widget needs its kernel, which this pane does not have: its text stands in.
+  if (data[WIDGET_MIME] != null) o = {output_type: 'display_data', metadata: {}, data: {'text/plain': mimeText(data['text/plain']) || 'interactive output: open the notebook to use it'}};
+  try { return outputEl(o, null, i); }
+  catch (_) { return Object.assign(document.createElement('div'), {className: 'lee-out error', textContent: 'this output could not be drawn'}); }
+}
+async function sideCopy(text, what) {
+  try { await navigator.clipboard.writeText(text); status(`${what} copied`, 'ok'); }
+  catch (_) { status('clipboard access failed', 'err'); }
+}
+async function sideInsert(c) {
+  if (lee.kind !== 'notebook') return status('open a notebook in the other pane to insert into it', 'err');
+  if (lee.readOnly) return status(`${compactPath(lee.path)} is read-only`, 'err');
+  const at = belowAt(lee.sel);
+  if (!await nbEdit({op: 'paste_many', i: at, cells: [sidePayload(c)]})) return;
+  focusCell(at); status(`cell inserted below cell ${at}`, 'ok');
+}
+async function cellToOther() {
+  "Copy the selected cells of the main notebook to the end of the notebook in the side pane."
+  const side = lee.sideNb;
+  if (lee.kind !== 'notebook' || !side) return status('open two notebooks side by side first', 'err');
+  if (side.path === lee.path) return status('both panes show the same notebook', 'err');
+  if (side.read_only) return status(`${compactPath(side.path)} is read-only`, 'err');
+  const cells = selectedCellIndices().map(cellClipboardPayload).filter(Boolean);
+  if (!cells.length) return status('select a cell to copy', 'err');
+  const seq = lee.sideSeq;
+  let r;
+  try { r = await post('/nb/edit', {op: 'paste_many', i: side.cells.length, cells, path: side.path, side: true}); }
+  catch (e) { return status(String(e.message || e), 'err'); }
+  if (seq !== lee.sideSeq) return;
+  sideRender(side.body, {...side.st, cells: r.cells});
+  if (!autoSaveEnabled()) return status(`${plural(cells.length, 'cell')} copied to ${compactPath(side.path)}; it is not saved yet`, 'ok');
+  try { await post('/nb/save', {path: side.path}); status(`${plural(cells.length, 'cell')} copied to ${compactPath(side.path)} and saved`, 'ok'); }
+  catch (e) { status(`copied, but not saved: ${e.message || e}`, 'err'); }
+}
+function sideCellEl(c, i, st) {
+  const d = document.createElement('div'), md = c.cell_type === 'markdown', code = c.cell_type === 'code';
+  d.className = 'lee-cell ' + c.cell_type; d.dataset.nbv = ''; d.dataset.i = i; d.dataset.id = c.id;
+  d.style.setProperty('--lee-cell-lines', Math.min(20, Math.max(2, cellLines(c))));
+  const b = (act, label, title) => `<button class="lee-cbtn" data-act="${act}" title="${esc(title)}">${label}</button>`;
+  d.innerHTML = `<div class="lee-gutter"><div class="lee-execution-count">${esc(gutterFor(c))}</div></div>` +
+    `<div class="lee-cellmain"><div class="lee-cell-chrome"><span class="lee-cell-meta"><span class="lee-cell-no">#${i + 1}</span>` +
+    `<span class="lee-cell-size">${esc((code ? (LANG_TAGS[st.lang] || st.lang || 'py') : cellKind(c)) + ' · ' + plural(cellLines(c), 'line'))}</span></span>` +
+    `<div class="lee-cellbtns">` + b('source', 'copy', 'copy the source of this cell') +
+    (code && (c.outputs || []).length ? b('output', 'copy output', 'copy the output of this cell as text') : '') +
+    b('cell', 'copy cell', 'copy this cell, then paste it in a notebook') +
+    b('insert', 'insert', 'insert this cell below the selected cell of the notebook in the other pane') + `</div></div>` +
+    (md ? '<div class="lee-md-cell lee-md"></div>' : '<div class="lee-cm"></div>') + '<div class="lee-nbv-out"></div></div>';
+  return d;
+}
+function sideFill(d, c, st) {
+  "Build what a cell scrolled into view shows: its editor or its Markdown, and its outputs."
+  if (c.cell_type === 'markdown') {
+    const el = $('.lee-md-cell', d); el.dataset.mdBase = (st.path || '').slice(0, (st.path || '').lastIndexOf('/'));
+    renderMarkdown(el, c.source || '', true, mdPaint(c, false));
+  } else lee.sideViews.push(createEditor($('.lee-cm', d), {doc: String(c.source || ''), lang: c.cell_type === 'code' ? (st.lang || 'python') : '',
+    readOnly: true, lineNums: false, settings: {overviewMode: 'off'}}));
+  const out = $('.lee-nbv-out', d); (c.outputs || []).forEach((o, i) => out.appendChild(sideOutEl(o, i)));
+}
+function sideRender(body, st) {
+  "The cells of `st` in `body`: each as the notebook draws it, with copy actions."
+  sideClear();
+  const cells = st.cells || [];
+  lee.sideNb = {path: st.path, read_only: !!st.read_only, cells, body, st};
+  body.innerHTML = '';
+  if (!cells.length) { body.innerHTML = '<div class="lee-dim">this notebook has no cells</div>'; return; }
+  const io = lee.sideObserver = new IntersectionObserver(es => es.forEach(e => {
+    if (!e.isIntersecting) return;
+    io.unobserve(e.target); sideFill(e.target, cells[+e.target.dataset.i], st);
+  }), {rootMargin: '700px 0px'});
+  let drawn = 0;
+  const more = () => {
+    body.querySelector('[data-side-more]')?.remove();
+    for (const end = Math.min(cells.length, drawn + SIDE_CAP); drawn < end; drawn++) { const d = sideCellEl(cells[drawn], drawn, st); body.appendChild(d); io.observe(d); }
+    if (drawn < cells.length) body.insertAdjacentHTML('beforeend', `<button class="lee-btn" data-side-more>show ${Math.min(SIDE_CAP, cells.length - drawn)} more of ${cells.length - drawn} cells</button>`);
+  };
+  more();
+  body.onclick = e => {
+    if (e.target.closest('[data-side-more]')) return more();
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    const c = cells[+b.closest('.lee-cell').dataset.i], act = b.dataset.act;
+    if (act === 'source') sideCopy(String(c.source || ''), 'cell source');
+    else if (act === 'output') sideCopy(sideOutText(c), 'output');
+    else if (act === 'cell') { lee.cellClipboard = {cells: [sidePayload(c)], cell: sidePayload(c), from: st.path}; sideCopy(String(c.source || ''), 'cell'); }
+    else if (act === 'insert') sideInsert(c);
+  };
 }
 
 function splitStage(direction) {
   "The second pane, shown beside the editor with its editor destroyed and its side page dropped."
   const stage=$('#editorstage'),host=$('#editor2'); if (!stage || !host) return null;
   if (lee.editors.get('secondary')) { LeeCM.destroy(lee.editors.get('secondary')); lee.editors.delete('secondary'); }
+  sideClear();
   lee.sidePage = null;
   stage.classList.add('split',`split-${direction}`); stage.classList.remove(`split-${direction==='vertical'?'horizontal':'vertical'}`);
   host.hidden=false; setSplitSize(localStorage.getItem(SPLIT_SIZE)); return host;
 }
 
+const sideHead = (path, ...bits) => `<div class="lee-split-head"><span>${esc(compactPath(path))}</span>${bits.join('')}<button class="lee-btn" onclick="leeCloseSplit()">close</button></div>`;
+
 async function mountSecondary(path, direction = 'vertical') {
   const stage=$('#editorstage'),host=$('#editor2'); if (!stage || !host) return;
+  const seq = lee.sideSeq = (lee.sideSeq || 0) + 1;   // a later mount or a close makes this one stale
   const st=await api('/tab/state?path='+encodeURIComponent(path));
-  if (!SPLIT_KINDS[st.kind]) return status(`a ${st.kind || 'blank'} tab cannot be opened beside another; text, notebooks, PDFs, images and office files can`,'err');
+  if (seq !== lee.sideSeq) return;
+  if (st.kind === 'error') {
+    splitStage(direction); lee.secondaryPath = ''; lee.activeEditor = 'primary';
+    host.innerHTML = sideHead(path) + `<div class="lee-err">${esc(st.error)}</div>`;
+    return;
+  }
+  if (!SPLIT_KINDS[st.kind]) {
+    leeCloseSplit();
+    return status(st.kind ? `a ${st.kind} tab cannot be opened beside another; text, notebooks, PDFs, images and office files can` : 'that file is not open any more', 'err');
+  }
   if (st.kind !== 'text') {
     splitStage(direction);
-    host.innerHTML=`<div class="lee-split-head"><span>${esc(compactPath(st.path||path))}</span>` +
-      `<span class="lee-dim">${esc(SPLIT_KINDS[st.kind])}</span>` +
-      `<button class="lee-btn" onclick="leeCloseSplit()">close</button></div>` +
+    const nb = st.kind === 'notebook';
+    host.innerHTML = sideHead(st.path||path, `<span class="lee-dim">${esc(SPLIT_KINDS[st.kind])}</span>`,
+      nb && st.read_only ? '<span class="lee-dim" data-readonly>read only</span>' : '',
+      nb ? '<button class="lee-btn" onclick="leeSwapSplit()" title="show this notebook in the main pane, and the main one here">swap panes</button>' : '') +
       `<div class="lee-split-body" id="filecm2"></div>`;
-    if (st.kind === 'notebook') secondaryNotebook(host, st);
+    if (nb) sideRender($('.lee-split-body', host), st);
     else if (st.kind === 'pdf') mountPdf($('.lee-split-body', host), st);
     else if (st.kind === 'office') mountOffice($('.lee-split-body', host), st);
     else mountImage($('.lee-split-body', host), st);
@@ -2775,12 +2890,38 @@ async function mountSecondary(path, direction = 'vertical') {
     localStorage.setItem('lee-editor-split', JSON.stringify({path, direction}));
     return;
   }
-  splitStage(direction); host.innerHTML=`<div class="lee-split-head"><span>${esc(compactPath(st.path))}</span><button class="lee-btn" onclick="leeCloseSplit()">close</button></div><div class="lee-cm" id="filecm2"></div>`;
-  const key=st.path,view=createEditor($('#filecm2'),{doc:lee.dirtyBuffers.has(key)?lee.buffers.get(key):(st.text||''),lang:st.lang||'python',readOnly:!!st.read_only,lineNums:true,lintPath:st.path||'',completeUrl:'/complete',tableKeys:true,
-    onDefinition:name=>findDefinition(name),onChange:txt=>{rememberBuffer(key,{path:key,kind:'text',text:txt});lee.editVersion+=1;const tab=$$('.lee-tab').find(x=>x.title===key);tab?.classList.add('dirty');setTabSaveState(tab,'pending');scheduleAutoSave();}});
+  const isMd = st.lang === 'markdown', key = st.path;
+  splitStage(direction);
+  host.innerHTML = sideHead(st.path, st.read_only ? '<span class="lee-dim" data-readonly>read only</span>' : '') +
+    (isMd ? mdShell(key, mdViewOf(key, 'rendered'), {bar: 'mdview2', cm: 'filecm2', preview: 'mdpreview2'}) : '<div class="lee-cm" id="filecm2"></div>');
+  const paint = txt => renderMarkdown($('#mdpreview2'), txt, false, el => rupakaFences(el, `file2:${key}`));
+  const view=createEditor($('#filecm2'),{doc:lee.dirtyBuffers.has(key)?lee.buffers.get(key):(st.text||''),lang:st.lang||'python',readOnly:!!st.read_only,lineNums:true,lintPath:st.path||'',completeUrl:'/complete',tableKeys:true,
+    onDefinition:name=>findDefinition(name),onChange:txt=>{rememberBuffer(key,{path:key,kind:'text',text:txt});lee.editVersion+=1;const tab=$$('.lee-tab').find(x=>x.title===key);tab?.classList.add('dirty');setTabSaveState(tab,'pending');scheduleAutoSave();if(isMd)paint(txt);}});
+  if (isMd) { paint(LeeCM.getDoc(view)); mdWire($('#mdview2'), view, key); }
   recordDiskVersion(st.path || path, st.disk_version || '');
   lee.editors.set('secondary',view);lee.secondaryPath=path;$('#filecm2').addEventListener('focusin',()=>{lee.activeEditor='secondary';setScope('editor');});localStorage.setItem('lee-editor-split',JSON.stringify({path,direction}));LeeCM.focus(view);
 }
+async function leeOpenSide(path, direction = 'vertical') {
+  "Show the file `path` beside the main one, opening it as a tab first when it is not one."
+  if (!path) return status('select a file or open a tab first', 'err');
+  if (path === lee.path) return status('that file is already open in the main pane', 'err');
+  try {
+    if (!$$('.lee-tab').some(t => t.title === path)) {
+      const prev = lee.path;
+      await leeOpenFile(path);
+      if (prev) await leeOpenFile(prev);   // the file opens as a tab; the main pane stays where it was
+    }
+    await mountSecondary(path, direction);
+  } catch (e) { status(String(e.message || e), 'err'); }
+}
+window.leeOpenSide = leeOpenSide;
+async function leeSwapSplit() {
+  "The side file becomes the main one, and the main one goes to the side."
+  const side = lee.secondaryPath, main = lee.path, direction = $('#editorstage')?.classList.contains('split-horizontal') ? 'horizontal' : 'vertical';
+  if (!side || !main) return;
+  await leeOpenFile(side); await mountSecondary(main, direction);
+}
+window.leeSwapSplit = leeSwapSplit;
 function mountPage(url, title = '', direction = 'vertical') {
   "The local Leela page `url` in the second pane, in a frame with `pane=1`. False when `url` is not local or there is no second pane."
   const src = leePaneURL(url), host = src && splitStage(direction === 'horizontal' ? 'horizontal' : 'vertical');
@@ -2814,7 +2955,7 @@ function paintSidePage(page) {
   page.frame.title = b.textContent; $('.lee-split-own', head).href = leeOwnURL(page.url);
   localStorage.setItem('lee-editor-split', JSON.stringify({page: page.url, title: page.title, direction: page.direction}));
 }
-function leeCloseSplit(){const stage=$('#editorstage'),host=$('#editor2'),v=lee.editors.get('secondary');if(v)LeeCM.destroy(v);lee.editors.delete('secondary');lee.sidePage=null;lee.secondaryPath='';lee.activeEditor='primary';stage?.classList.remove('split','split-vertical','split-horizontal');if(host){host.hidden=true;host.innerHTML='';}localStorage.removeItem('lee-editor-split');}
+function leeCloseSplit(){const stage=$('#editorstage'),host=$('#editor2'),v=lee.editors.get('secondary');sideClear();lee.sideSeq=(lee.sideSeq||0)+1;if(v)LeeCM.destroy(v);lee.editors.delete('secondary');lee.sidePage=null;lee.secondaryPath='';lee.activeEditor='primary';stage?.classList.remove('split','split-vertical','split-horizontal');if(host){host.hidden=true;host.innerHTML='';}localStorage.removeItem('lee-editor-split');}
 window.leeCloseSplit=leeCloseSplit;
 function leeSplit(direction='vertical') {
   // Any open tab the second pane can hold, not only the text ones: two notebooks beside each other
@@ -3799,7 +3940,7 @@ function outputEl(o, c = null, i = 0) {
 }
 
 function paintSel() {
-  $$('.lee-cell').forEach(el => {
+  $$('#editor .lee-cell').forEach(el => {
     const i = +el.dataset.i, selected = lee.cellSelection.has(i) || (!lee.cellSelection.size && i === lee.sel);
     el.classList.toggle('sel', selected); el.setAttribute('aria-selected', String(selected));
   });
