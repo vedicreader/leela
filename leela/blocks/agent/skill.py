@@ -114,7 +114,7 @@ def _tools(ai):
     rows = lambda ns: ''.join(f'- **{g}**: ' + row([n for n in ns if grp(n) == g]) + '\n' for g in sorted({grp(n) for n in ns}))
     rest = {*tool_groups(), *own, *(f.__name__ for f in ai.registry.tools)} - now - HIDDEN
     return (f'Offered now:\n{rows(now - HIDDEN)}' if now else '') + (
-        f'\nNot offered now. The host, the model profile, a setting or the active tab decides:\n{rows(rest)}' if rest else '')
+        f'\nNot offered now (host, profile, setting or tab decides):\n{rows(rest)}' if rest else '')
 
 def leela_skill(ai=None):
     "The skill text: features first, then menus, commands, keys, settings and agent tools."
@@ -134,7 +134,7 @@ def leela_skill(ai=None):
                '.\n- Centre: the editor tabs. Right: Variables and the agent. Bottom: exec, terminal and log.\n'
                '- Each pane has a `⋯` menu. Right-click opens the same menu.\n\n## Menu bar\n')
     for t, rows in BAR: out.append(f'- **{"Leela" if t == "__app__" else t}**: ' + SEP.join(l for r in rows if (l := _label(r))) + '\n')
-    out.append('\n## Context menus (`⋯` or right-click)\n\nEach menu also holds the menu-bar commands that apply to it. These are only here:\n')
+    out.append('\n## Context menus (`⋯` or right-click)\n\nEach also holds the menu-bar commands that apply to it. Only these are extra:\n')
     for sf, rows in MENUS.items():
         if ls := list(dict.fromkeys(K.lookup(r.action).label or r.action for r in rows if r.action and r.action not in menus)): out.append(f'- **{sf.replace("_head", " pane header")}**: ' + SEP.join(ls) + '\n')
     seen = {*menus, *(r.action for rows in MENUS.values() for r in rows if r.action)}
@@ -149,7 +149,7 @@ def leela_skill(ai=None):
     out.append('\n## Slash commands in the agent prompt\n\n' + ', '.join(
         f'`/{n}`' + (f' ({h})' if (h := reg.get(n) or COMMAND_HELP.get(n) or PAGE_COMMANDS.get(n)) else '')
         for n in sorted({*cmds, *PAGE_COMMANDS})) + '\n')
-    out.append(f'\n## Settings ({_key("settings")})\n\nThe user file, and per project `.leela/settings.json`, which overrides it key by key. Sections and their keys:\n')
+    out.append(f'\n## Settings ({_key("settings")})\n\nSections and keys; the project file `.leela/settings.json` overrides the user file:\n')
     for sec, d in DEFAULT_SETTINGS.items():   # a package section can hold many rows, so it gets one line
         out.append(f'- **{sec}**: ' + (f'{len(d)} {SECTIONS[sec]["owner"]} settings, user settings only' if sec in SECTIONS else ', '.join(d)) + '\n')
     out.append('\n'+LEARN)
