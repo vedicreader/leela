@@ -49,14 +49,6 @@ def calls(out):
 
 def served(tmp_path): return TestClient(ide_app(Workspace(roots=[tmp_path.resolve()])))
 
-@pytest.fixture(autouse=True)
-def _learn_stops(monkeypatch):
-    "A venv whose Abhyasa has no `stop_app` fails every `TestClient` at exit; the Learn host is not what these tests are about."
-    import abhyasa.app
-    if hasattr(abhyasa.app, 'stop_app'): return
-    from leela.blocks.learn.host import Shared
-    monkeypatch.setattr(Shared, 'drop', lambda self: None)
-
 def wait(client, root, timeout=20):
     "Poll the panel's state until the step has stopped moving."
     end = time.time() + timeout
