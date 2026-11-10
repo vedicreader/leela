@@ -2436,7 +2436,7 @@ async function learnMount(host, st) {
   });
   abh.addEventListener('submit', e => {
     const f = e.target;
-    if (f.matches(LEARN_HX) || f.closest(LEARN_HX)) return;
+    if (f.matches(LEARN_HX) || f.closest('[hx-trigger*=submit]')) return;   // a form inside a card that loads by hx-get still posts through htmx
     if (f.matches('form.leela-open, form.leela-go, form[action="/learn/open"]') && window.leeOpenInCode) { e.preventDefault(); e.stopImmediatePropagation(); return leeOpenInCode(f); }
     e.preventDefault(); e.stopImmediatePropagation();
     const u = new URL(f.getAttribute('action') || cur, location.origin), get = (f.method || 'get').toLowerCase() === 'get', values = Object.fromEntries(new FormData(f));

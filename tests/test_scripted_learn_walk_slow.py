@@ -70,7 +70,8 @@ def test_every_button_of_the_first_step_answers_in_plain_words(tmp_path, monkeyp
                     await pg.wait_for_timeout(1200)
                     seen['teach'] = await _clean(pg, 'Teach me')
                     await pg.screenshot(path=str(SHOTS/'s1-explain-light.png'))
-                    await pg.locator('.abh').get_by_text('Comparing fractions').first.click()
+                    navs = []; pg.on('request', lambda r: r.is_navigation_request() and navs.append(r.url))
+                    await pg.locator('.abh .go[data-act="next"]').click()   # the outline hides in a pane under 940 px, so Next idea is the way on
                     await pg.wait_for_function("() => /Two friends/.test(document.querySelector('.abh')?.innerText || '') && /1 of 8/.test(document.querySelector('.abh #check')?.innerText || '')", timeout=30000)
                     await pg.wait_for_timeout(1000)
                     await pg.locator('.abh #ans').fill('You eat more, because fourths are bigger than eighths')
@@ -79,14 +80,14 @@ def test_every_button_of_the_first_step_answers_in_plain_words(tmp_path, monkeyp
                     await pg.wait_for_timeout(1200)
                     seen['right'] = await _clean(pg, 'right answer')
                     await pg.screenshot(path=str(SHOTS/'s1-right-light.png'))
-                    await pg.locator('.abh').get_by_text('Adding fractions').first.click()
+                    await pg.locator('.abh .go[data-act="next"]').click()
                     await pg.wait_for_function("() => /You eat 1 of 5/.test(document.querySelector('.abh')?.innerText || '') && /5 equal slices/.test(document.querySelector('.abh #check')?.innerText || '')", timeout=30000)
                     await pg.wait_for_timeout(1000)
                     await pg.locator('.abh #idk').click()
                     await pg.wait_for_function("() => /Check:|1\\. /.test(document.querySelector('.abh')?.innerText || '')", timeout=30000)
                     await pg.wait_for_timeout(800)
                     seen['idk'] = await _clean(pg, "I don't know")
-                    seen['url'] = pg.url
+                    seen['url'] = pg.url; seen['navs'] = navs
                 finally: await b.close()
         finally:
             srv.should_exit = True
@@ -94,10 +95,11 @@ def test_every_button_of_the_first_step_answers_in_plain_words(tmp_path, monkeyp
             restore()
         return seen
     seen = asyncio.run(asyncio.wait_for(go(), 250))
-    assert 'Teach me' in seen['wrong'] and 'Not yet' in seen['wrong'] and 'Error:' in seen['wrong'], seen['wrong']
+    assert 'Teach me' in seen['wrong'] and 'Not yet' in seen['wrong'] and 'must have the same size' in seen['wrong'] and 'Error:' not in seen['wrong'], seen['wrong']
     assert 'Correct' in seen['right'] and 'HINT' in seen['hint'].upper()
     assert 'THE TUTOR' in seen['first'].upper() and '?' in seen['first'], seen['first']
     assert 'Check' in seen['idk'] and 'Check' in seen['teach'], (seen['idk'], seen['teach'])
+    assert not seen['navs'], f"Next idea left the page: {seen['navs']}"
 
 
 @pytest.mark.slow
