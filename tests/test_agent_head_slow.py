@@ -86,7 +86,7 @@ def test_the_more_menu_takes_no_focus_on_load_answers_the_keyboard_and_keeps_tog
         return out
     got = asyncio.run(_page(go))
     assert got['load'] == {'menu': False, 'focus': got['load']['focus']} and 'agentmore' not in got['load']['focus'], got['load']
-    assert got['buttons'] == 5, got   # the Learn toggle sits before More
+    assert got['buttons'] == 4, got   # the old Learn toggle is hidden: a mode tag, not a button, sits before More
     assert (got['clicked']['role'], got['clicked']['inside'], got['clicked']['expanded']) == ('menu', True, 'true'), got['clicked']
     assert got['rows']['checks'] == 8 and got['rows']['accept'] is True and got['rows']['new'], got['rows']
     assert (got['down1'], got['down2']) == ('agent_new', 'agent_threads'), got

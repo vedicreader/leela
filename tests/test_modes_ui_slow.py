@@ -23,7 +23,7 @@ def test_the_switch_applies_each_modes_own_layout_and_the_tab(tmp_path, monkeypa
     lr, jid, slug = _env(tmp_path, monkeypatch)
     async def scenario(pg, ws, port):
         bad = []; pg.on('pageerror', lambda e: bad.append(str(e)))
-        assert await pg.locator('#modeswitch [data-mode]').all_inner_texts() == ['Code', 'Learn']
+        assert await pg.locator('#modeswitch [data-mode]').all_inner_texts() == ['Code', 'Learn', 'Create']
         await pg.evaluate("leePane('bottom', false)")
         code = await pg.evaluate(DOCKS)
         assert code['mode'] == 'code' and code['files'] and not code['exec'] and not code['bar'], code

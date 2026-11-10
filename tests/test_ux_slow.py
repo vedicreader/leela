@@ -160,7 +160,7 @@ BRAND = """() => { const box = e => { const r = document.createRange(); r.select
   const mb = m.getBoundingClientRect(), wb = box(w);
   const g = document.querySelector('#gitpill'), f = document.querySelector('.lee-menubar-btn'), h = document.querySelector('#header').getBoundingClientRect(), p = document.querySelector('#workspacepill').getBoundingClientRect();
   return {gap: Math.abs(base(w) - base(n)), row: Math.max(...[w, n, g, f].map(base)) - Math.min(...[w, n, g, f].map(base)), inside: p.top >= h.top && p.bottom <= h.bottom,
-    cut: n.scrollWidth > n.clientWidth, mark: Math.abs((mb.top + mb.bottom) / 2 - (wb.top + wb.bottom) / 2)}; }"""
+    cut: n.scrollWidth > n.clientWidth, sw: n.scrollWidth, cw: n.clientWidth, pw: p.width, hw: h.width, mark: Math.abs((mb.top + mb.bottom) / 2 - (wb.top + wb.bottom) / 2)}; }"""
 
 def test_the_brand_and_the_folder_share_a_baseline_and_the_folder_shows_whole(tmp_path):
     "The serif Leela and the folder sat 4 px above the branch and the menus, and a narrow window cut the folder name."
@@ -169,4 +169,4 @@ def test_the_brand_and_the_folder_share_a_baseline_and_the_folder_shows_whole(tm
         await pg.set_viewport_size({'width': 900, 'height': 600})
         return await pg.evaluate(BRAND)
     got = asyncio.run(_on_page(go, roots=[str(d)]))
-    assert got['gap'] <= 1 and got['row'] <= 1 and got['inside'] and not got['cut'] and got['mark'] <= 3, 'Leela, the folder, the branch and File share one baseline'
+    assert got['gap'] <= 1 and got['row'] <= 1 and got['inside'] and not got['cut'] and got['mark'] <= 3, 'Leela, the folder, the branch and File share one baseline ' + str(got)

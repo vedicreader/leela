@@ -617,8 +617,9 @@ def test_esc_never_ends_the_presentation(tmp_path):
     assert out['under'] is True, 'an Esc handler underneath the presentation acted'
     assert out['deck'] == 200
     h = out['help']
-    assert h['top'] == 'Every key outside the present section can be rebound. Each of those keys also has a button.', h
+    assert h['top'] == 'Every key outside the present and Learn sections can be rebound. Each of those keys also has a button.', h
     assert h['notes'].pop('present') == 'These keys work only during a presentation. They cannot be rebound. Laser and blank have no button.', h
+    assert h['notes'].pop('editor').endswith('and only for plain data.'), h   # the live scrub note
     assert h['notes'] and not any(h['notes'].values()), h
 
 LASER = [md('# Alpha\n\nbody a', 'slide', 'l0'), md('# Beta\n\nbody b', 'slide', 'l1'), md('# Gamma', 'slide', 'l2')]
