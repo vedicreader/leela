@@ -2,6 +2,17 @@
 
 <!-- do not remove -->
 
+## 1.1.1
+
+Learn bar and side pane. Needs ramabana 0.2.114, shalya 0.1.33 and pullup 0.0.14.
+
+- The Learn bar shows an Ideas list when the window is under 940 px and the walk outline is hidden.
+- The side pane shows Markdown rendered.
+- The side pane shows a notebook as a notebook, with cells, outputs, copy actions and a read-only badge.
+- Open to the side puts a file in the side pane.
+- Copy cell copies a cell to the other notebook.
+- The floors are raised: ramabana 0.2.114 with the new peer tools and image model, shalya 0.1.33, and pullup 0.0.14 with the release notes gate fix.
+
 ## 1.1.0
 
 Learn and Create modes. Needs abhyasa 0.0.22, rupaka 0.0.16, kunda 0.0.16, dhrishti 0.1.14 and pullup 0.0.13.

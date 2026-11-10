@@ -36,7 +36,7 @@ FEATURES = (
     ('The screen guide', ('the I don\'t get… button on a lesson cell',),
      'Say in one line what you do not understand. The guide explains it in steps and draws a board.'),
     ('Search and memory', ('code_search', 'find_definition', 'find_usages', 'vault_find'),
-     'Search code with kosha: text, meaning, call graph and cells. Ripgrep is the fallback. The agent recalls saved vault pages.'),
+     'Search code with kosha: text, meaning, call graph and cells. The agent recalls saved vault pages.'),
     ('The vault', ('open_vault', 'clip_to_vault', 'vault_review'),
      'Keep pages, papers, repositories, videos and folders. Search them, and attach sections to a question. `@` completes documents.'),
     ('Research', ('research', 'web_search', 'read_url'),
