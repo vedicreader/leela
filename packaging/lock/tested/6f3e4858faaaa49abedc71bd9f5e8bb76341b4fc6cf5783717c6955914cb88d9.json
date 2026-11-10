@@ -1,0 +1,115 @@
+{
+ "env_bytes": 2037708303,
+ "extras": [
+  "mlx",
+  "llama",
+  "langserver"
+ ],
+ "fresh": true,
+ "hash": "6f3e4858faaaa49abedc71bd9f5e8bb76341b4fc6cf5783717c6955914cb88d9",
+ "launcher_api": 1,
+ "leela": "1.1.0",
+ "macos": "26.5.2",
+ "passed": true,
+ "python": "3.13.18",
+ "results": [
+  {
+   "ok": true,
+   "secs": 47.2,
+   "step": "uv sync"
+  },
+  {
+   "ok": true,
+   "secs": 0.2,
+   "step": "pip check"
+  },
+  {
+   "ok": true,
+   "secs": 11.5,
+   "step": "imports"
+  },
+  {
+   "ok": true,
+   "secs": 0.1,
+   "step": "project .venv"
+  },
+  {
+   "ok": true,
+   "secs": 31.6,
+   "step": "server /health"
+  },
+  {
+   "ok": true,
+   "secs": 2.0,
+   "step": "/hub/open"
+  },
+  {
+   "ok": true,
+   "secs": 6.2,
+   "step": "project kernel cell"
+  },
+  {
+   "ok": true,
+   "secs": 0.5,
+   "step": "windows by port"
+  },
+  {
+   "ok": true,
+   "secs": 6.0,
+   "step": "venv notice, Quick Look"
+  },
+  {
+   "ok": true,
+   "secs": 3.5,
+   "step": "quit with a page open"
+  },
+  {
+   "ok": true,
+   "secs": 3.3,
+   "step": "agent shell tools"
+  },
+  {
+   "ok": true,
+   "secs": 6.3,
+   "step": "server /health (app 1.0.0 env)"
+  },
+  {
+   "ok": true,
+   "secs": 3.2,
+   "step": "project kernel cell (app 1.0.0 env)"
+  },
+  {
+   "ok": true,
+   "secs": 3.4,
+   "step": "quit with a page open (app 1.0.0 env)"
+  },
+  {
+   "ok": true,
+   "secs": 1.0,
+   "step": "kernel cell 1+1"
+  },
+  {
+   "ok": true,
+   "secs": 0.4,
+   "step": "file walk"
+  },
+  {
+   "ok": true,
+   "secs": 4.8,
+   "step": "extra mlx"
+  },
+  {
+   "ok": true,
+   "secs": 2.5,
+   "step": "extra llama"
+  },
+  {
+   "ok": true,
+   "secs": 0.0,
+   "step": "extra langserver"
+  }
+ ],
+ "test_code": "60ada8e3374881ff95266ad4408a058a9cbcdc38ab0349b90cbebbfe4e3a8202",
+ "time": "2026-11-10T03:01:14Z",
+ "uv": "0.13.6"
+}

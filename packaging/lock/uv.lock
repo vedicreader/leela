@@ -12,38 +12,38 @@ required-markers = [
 ]
 
 [options]
-exclude-newer = "2026-11-01T07:33:28Z"
+exclude-newer = "2026-11-03T02:58:46Z"
 
 [options.exclude-newer-package]
-abhyasa = "2026-11-08T07:33:28Z"
-adhara = "2026-11-08T07:33:28Z"
-cfeasy = "2026-11-08T07:33:28Z"
-dhrishti = "2026-11-08T07:33:28Z"
-dhrona = "2026-11-08T07:33:28Z"
-dockeasy = "2026-11-08T07:33:28Z"
-fossick = "2026-11-08T07:33:28Z"
-ganapati = "2026-11-08T07:33:28Z"
-gheasy = "2026-11-08T07:33:28Z"
-kavacha = "2026-11-08T07:33:28Z"
-koshas = "2026-11-08T07:33:28Z"
-kunda = "2026-11-08T07:33:28Z"
-laghu = "2026-11-08T07:33:28Z"
-laghu-rs = "2026-11-08T07:33:28Z"
-lekhaka = "2026-11-08T07:33:28Z"
-litesearch = "2026-11-08T07:33:28Z"
-pdflite = "2026-11-08T07:33:28Z"
-pobblebonk = "2026-11-08T07:33:28Z"
-pullup = "2026-11-08T07:33:28Z"
-rahasya = "2026-11-08T07:33:28Z"
-ramabana = "2026-11-08T07:33:28Z"
-rishi = "2026-11-08T07:33:28Z"
-rupaka = "2026-11-08T07:33:28Z"
-shalya = "2026-11-08T07:33:28Z"
-uraiyadal = "2026-11-08T07:33:28Z"
-varga = "2026-11-08T07:33:28Z"
-vishalakshi = "2026-11-08T07:33:28Z"
-vpseasy = "2026-11-08T07:33:28Z"
-vruksha = "2026-11-08T07:33:28Z"
+abhyasa = "2026-11-10T02:58:46Z"
+adhara = "2026-11-10T02:58:46Z"
+cfeasy = "2026-11-10T02:58:46Z"
+dhrishti = "2026-11-10T02:58:46Z"
+dhrona = "2026-11-10T02:58:46Z"
+dockeasy = "2026-11-10T02:58:46Z"
+fossick = "2026-11-10T02:58:46Z"
+ganapati = "2026-11-10T02:58:46Z"
+gheasy = "2026-11-10T02:58:46Z"
+kavacha = "2026-11-10T02:58:46Z"
+koshas = "2026-11-10T02:58:46Z"
+kunda = "2026-11-10T02:58:46Z"
+laghu = "2026-11-10T02:58:46Z"
+laghu-rs = "2026-11-10T02:58:46Z"
+lekhaka = "2026-11-10T02:58:46Z"
+litesearch = "2026-11-10T02:58:46Z"
+pdflite = "2026-11-10T02:58:46Z"
+pobblebonk = "2026-11-10T02:58:46Z"
+pullup = "2026-11-10T02:58:46Z"
+rahasya = "2026-11-10T02:58:46Z"
+ramabana = "2026-11-10T02:58:46Z"
+rishi = "2026-11-10T02:58:46Z"
+rupaka = "2026-11-10T02:58:46Z"
+shalya = "2026-11-10T02:58:46Z"
+uraiyadal = "2026-11-10T02:58:46Z"
+varga = "2026-11-10T02:58:46Z"
+vishalakshi = "2026-11-10T02:58:46Z"
+vpseasy = "2026-11-10T02:58:46Z"
+vruksha = "2026-11-10T02:58:46Z"
 
 [manifest]
 constraints = [
@@ -53,7 +53,7 @@ constraints = [
 
 [[package]]
 name = "abhyasa"
-version = "0.0.21"
+version = "0.0.22"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
@@ -71,9 +71,9 @@ dependencies = [
     { name = "vidyut" },
     { name = "vishalakshi" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b3/6d/dfd721d35eb79c85952caadacc469ae2fd4f44ea83043e4d3eba5ecb9e87/abhyasa-0.0.21.tar.gz", hash = "sha256:a522d921e5a6175225f7d13e14a5d66d3e0539cc9a3ced83f28868bf2127beb6", size = 1626273, upload-time = "2026-11-06T00:50:40.94Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/90/d6/6f4b2c9ee281d1ecedadce3bf28f4af4635f60d6a4c0c1af775d5d849e1f/abhyasa-0.0.22.tar.gz", hash = "sha256:940a3ed7300075ba900288371469a2e8e0332d42b07d1fb9aab9aa15239c5f5b", size = 1646537, upload-time = "2026-11-10T01:41:46.107Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ca/f1/a2b783f95257059c66b6e36c5246653460a9d032702fe21a4a0f536ecb4d/abhyasa-0.0.21-py3-none-any.whl", hash = "sha256:1216aa0970c79decc0a42da097614cd28eba04a5b766951c7e576e4fb04ed604", size = 1691954, upload-time = "2026-11-06T00:50:38.831Z" },
+    { url = "https://files.pythonhosted.org/packages/22/74/5199ee32a4b77799dd3f407da82387ee72826278e98e151753e147490ad1/abhyasa-0.0.22-py3-none-any.whl", hash = "sha256:b129ecb9add76eae1e7250d1edd2ef000cf457413fe558335afbc144d783d73a", size = 1714709, upload-time = "2026-11-10T01:41:44.157Z" },
 ]
 
 [[package]]
@@ -574,7 +574,7 @@ wheels = [
 
 [[package]]
 name = "dhrishti"
-version = "0.1.13"
+version = "0.1.14"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
@@ -584,9 +584,9 @@ dependencies = [
     { name = "python-fasthtml" },
     { name = "safepyrun" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/7a/4b/981e894809cfd3537b6de6acc2295d94385eb98dcdfce8dccb3d9cca6213/dhrishti-0.1.13.tar.gz", hash = "sha256:4cf175768c378f3a7566fc2637ffd21ed3a3941da7bde3adef955cbdfaba2019", size = 37299, upload-time = "2026-11-07T20:14:42.061Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c6/7c/2d8b51b7244b689f8d48d32ea65c103483a2921151ed75dd7712c866cbf2/dhrishti-0.1.14.tar.gz", hash = "sha256:d454297c3c689822ee03c6b780f67eb45cf0af360cd08c525a21e038dc13f1a2", size = 39605, upload-time = "2026-11-10T00:54:58.007Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/64/13/03c0b1fef9fe63951c42d9fc51e55d7bc54f2a69196aee0a4babb24aac55/dhrishti-0.1.13-py3-none-any.whl", hash = "sha256:e23112bd3f9bcc56df30124cb8fbe862fb4b6a141d04e9e9c7c8b49eb339e465", size = 40941, upload-time = "2026-11-07T20:14:40.895Z" },
+    { url = "https://files.pythonhosted.org/packages/25/74/0fe4e76ae3c4f7591a0232229bb6ed7f322e9fee624109f7b7f1053285fc/dhrishti-0.1.14-py3-none-any.whl", hash = "sha256:cdd0b7bf5a3c87b4e07fc253ae41b3abb0bf8290a9aa8e547c1861c67376721e", size = 43417, upload-time = "2026-11-10T00:54:56.311Z" },
 ]
 
 [[package]]
@@ -1535,14 +1535,14 @@ wheels = [
 
 [[package]]
 name = "kavacha"
-version = "0.0.18"
+version = "0.0.21"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/31/67/140a26b45b73fd2d09c6bc24bbe8a25a5a4ce940b6223a253a113f782f78/kavacha-0.0.18.tar.gz", hash = "sha256:5e83a141f55a0739e60b2c413c1e07e6ff05e509c0efc7bb91ffa631718a6b01", size = 66362, upload-time = "2026-11-08T01:41:44.987Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/76/7f/3b88b7edc0cacb249d7c50fb1e18775541636af52ca415d7021e7dd2abc8/kavacha-0.0.21.tar.gz", hash = "sha256:541e83588ccc84df4221e3cb2db551ce3c19a06a0d286f1d462c7bbd3fc032dc", size = 67474, upload-time = "2026-11-08T09:13:42.678Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/43/58/81339e032cd6e5b51d8e07289ef6502dded2563c5f8f4543f06f94c2011a/kavacha-0.0.18-py3-none-any.whl", hash = "sha256:eb3b8393a1a890b60f4b8f249dba8671e92dc6ade55579e84b70d79f16b5e16e", size = 72978, upload-time = "2026-11-08T01:41:43.768Z" },
+    { url = "https://files.pythonhosted.org/packages/1d/8f/d604ee523310546df0b3899cc968f2463ff0c0a0dfccdba0fcffe5bc6a23/kavacha-0.0.21-py3-none-any.whl", hash = "sha256:01a38373c1375eeaace76304eb0e15555d3559a8452808369712d3659a21dd6a", size = 74056, upload-time = "2026-11-08T09:13:41.205Z" },
 ]
 
 [[package]]
@@ -1602,7 +1602,7 @@ wheels = [
 
 [[package]]
 name = "kunda"
-version = "0.0.15"
+version = "0.0.16"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "dhrishti" },
@@ -1614,9 +1614,9 @@ dependencies = [
     { name = "jupyter-client" },
     { name = "jupywire" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/81/92/b2e4922892cba2ad1f95c38073c6907db91b3fda078e4c54c989c85a99ad/kunda-0.0.15.tar.gz", hash = "sha256:587fd991a791a0a9ac800c4a41348a9c22ae08f3240debef62c7888668bca3a1", size = 52595, upload-time = "2026-11-07T20:14:04.604Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ec/8a/208b98bcd432337c3f1b0800ff50f0d3e5ce8ceff704dd1a872503cd5068/kunda-0.0.16.tar.gz", hash = "sha256:693b7d19ea035ff730a3239c0b3ea9409067fd8a1da802bf656e59b86a04e311", size = 57664, upload-time = "2026-11-10T00:58:00.357Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ed/a2/10b52ced444588361da39ef9674862bf663d58e4174f28b70a828080dbdb/kunda-0.0.15-py3-none-any.whl", hash = "sha256:71808968fbee5eddad996c8ad1b8ee8fa36635d05adee0d5bfc374551452c514", size = 38499, upload-time = "2026-11-07T20:14:03.327Z" },
+    { url = "https://files.pythonhosted.org/packages/44/60/536edcb47f3d36b90dd191a1001d473dc72d69f13b9f2e3535d0c5e3e457/kunda-0.0.16-py3-none-any.whl", hash = "sha256:8a976ddba6f4ea89bfff990ed6d05478d5be49ddb9797ac4f189ff85e92c34fc", size = 42065, upload-time = "2026-11-10T00:57:58.942Z" },
 ]
 
 [[package]]
@@ -1655,8 +1655,8 @@ wheels = [
 
 [[package]]
 name = "leela"
-version = "1.0.1"
-source = { url = "https://github.com/vedicreader/leela/releases/download/1.0.1/leela-1.0.1-py3-none-any.whl" }
+version = "1.1.0"
+source = { url = "https://github.com/vedicreader/leela/releases/download/1.1.0/leela-1.1.0-py3-none-any.whl" }
 dependencies = [
     { name = "abhyasa" },
     { name = "beautifulsoup4" },
@@ -1710,15 +1710,15 @@ dependencies = [
     { name = "watchfiles" },
 ]
 wheels = [
-    { url = "https://github.com/vedicreader/leela/releases/download/1.0.1/leela-1.0.1-py3-none-any.whl", hash = "sha256:856a0ed374935f5b0f6ee3946d143b160469ff1a6dd1374e2b12c16ed7efb0b8" },
+    { url = "https://github.com/vedicreader/leela/releases/download/1.1.0/leela-1.1.0-py3-none-any.whl", hash = "sha256:8d41a5f6b001f5740bf44df64bd2321a39c398f823b3cf5ef154957657aa5c68" },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "abhyasa", specifier = ">=0.0.16" },
+    { name = "abhyasa", specifier = ">=0.0.22" },
     { name = "beautifulsoup4", specifier = ">=4.15.0" },
     { name = "cfeasy", specifier = ">=0.0.6" },
-    { name = "dhrishti", specifier = ">=0.1.13" },
+    { name = "dhrishti", specifier = ">=0.1.14" },
     { name = "dhrona", specifier = ">=0.1.18" },
     { name = "dockeasy", specifier = ">=0.0.13" },
     { name = "exhash", specifier = ">=0.4.10" },
@@ -1733,15 +1733,15 @@ requires-dist = [
     { name = "jupygate", specifier = ">=0.0.1" },
     { name = "jupyter-client", specifier = ">=8.9.1" },
     { name = "jupywire", specifier = ">=0.1.1" },
-    { name = "kavacha", specifier = ">=0.0.18" },
-    { name = "kavacha", extras = ["macapp"], marker = "extra == 'macapp'", specifier = ">=0.0.18" },
-    { name = "kavacha", extras = ["window"], marker = "extra == 'desktop'", specifier = ">=0.0.18" },
-    { name = "kavacha", extras = ["window"], marker = "extra == 'macapp'", specifier = ">=0.0.18" },
-    { name = "kavacha", extras = ["window"], marker = "extra == 'windows'", specifier = ">=0.0.18" },
-    { name = "kavacha", extras = ["windows"], marker = "extra == 'windows'", specifier = ">=0.0.18" },
+    { name = "kavacha", specifier = ">=0.0.21" },
+    { name = "kavacha", extras = ["macapp"], marker = "extra == 'macapp'", specifier = ">=0.0.21" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'desktop'", specifier = ">=0.0.21" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'macapp'", specifier = ">=0.0.21" },
+    { name = "kavacha", extras = ["window"], marker = "extra == 'windows'", specifier = ">=0.0.21" },
+    { name = "kavacha", extras = ["windows"], marker = "extra == 'windows'", specifier = ">=0.0.21" },
     { name = "keyring", specifier = ">=25.0.0" },
     { name = "koshas", specifier = ">=0.1.23" },
-    { name = "kunda", specifier = ">=0.0.15" },
+    { name = "kunda", specifier = ">=0.0.16" },
     { name = "lekhaka", specifier = ">=0.0.4" },
     { name = "litesearch", specifier = ">=0.1.64" },
     { name = "mammoth", specifier = ">=1.13.0" },
@@ -1751,19 +1751,19 @@ requires-dist = [
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "orjson", specifier = ">=3.9" },
     { name = "packaging", specifier = ">=24.0" },
-    { name = "pullup", specifier = ">=0.0.12" },
+    { name = "pullup", specifier = ">=0.0.13" },
     { name = "pyright", specifier = ">=1.1.400" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-fasthtml", specifier = ">=0.14.9" },
     { name = "python-pptx", specifier = ">=1.0.2" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "rahasya", specifier = ">=0.0.4" },
-    { name = "ramabana", extras = ["cli"], specifier = ">=0.2.111" },
+    { name = "ramabana", extras = ["cli"], specifier = ">=0.2.112" },
     { name = "rapidfuzz", specifier = ">=3.0" },
     { name = "rgapi", specifier = ">=0.1.22" },
     { name = "rich", specifier = ">=13.0" },
     { name = "rishi", extras = ["llama", "mlx"], marker = "extra == 'local'", specifier = ">=0.1.68" },
-    { name = "rupaka", specifier = ">=0.0.15" },
+    { name = "rupaka", specifier = ">=0.0.16" },
     { name = "shalya", specifier = ">=0.1.32" },
     { name = "starlette", specifier = ">=1.6.0" },
     { name = "uvicorn", specifier = ">=0.30.0" },
@@ -1798,7 +1798,7 @@ mlx = [
 [package.metadata]
 requires-dist = [
     { name = "basedpyright", marker = "extra == 'langserver'", specifier = "==1.40.2" },
-    { name = "leela", url = "https://github.com/vedicreader/leela/releases/download/1.0.1/leela-1.0.1-py3-none-any.whl" },
+    { name = "leela", url = "https://github.com/vedicreader/leela/releases/download/1.1.0/leela-1.1.0-py3-none-any.whl" },
     { name = "llama-cpp-python", marker = "extra == 'llama'", url = "https://github.com/abetlen/llama-cpp-python/releases/download/v0.3.30-metal/llama_cpp_python-0.3.30-py3-none-macosx_11_0_arm64.whl" },
     { name = "mlx-lm", marker = "extra == 'mlx'", specifier = "==0.32.2" },
     { name = "numpy", marker = "extra == 'llama'", specifier = "==2.5.4" },
@@ -2539,7 +2539,7 @@ wheels = [
 
 [[package]]
 name = "pullup"
-version = "0.0.12"
+version = "0.0.13"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cfeasy" },
@@ -2552,9 +2552,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "vpseasy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cd/4e/da8ef28b5a5bbb389ba2b33e41c713cd606081fab49cbdcef24dea415398/pullup-0.0.12.tar.gz", hash = "sha256:09b639220da6b307a3c2fd2adb52ccc3bfa95f70bc074628986ea3ab85a92abc", size = 41175, upload-time = "2026-11-07T23:36:07.853Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/40/1d/c3b47702e7449798706222f930dca0d3434332417cd78277a21063ba32f6/pullup-0.0.13.tar.gz", hash = "sha256:32dd18ae1848501c7c8bdd895ffa5adc906ffd95cf50fdce69b9969ec88e8dd5", size = 42788, upload-time = "2026-11-10T00:20:19.058Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/db/f9/2d629bfe630dc2923b956aae45ecce8d27deb0c13457c027aee92911613a/pullup-0.0.12-py3-none-any.whl", hash = "sha256:6447451fb8cbcdfe45cf41c67b4c9a673d1970397a1c0cdd2a11cd038bbd3647", size = 46989, upload-time = "2026-11-07T23:36:06.663Z" },
+    { url = "https://files.pythonhosted.org/packages/3a/79/d6df9761fe7b0257fa2d08b532b6449c697ad88121eaecc669ba3b9a5401/pullup-0.0.13-py3-none-any.whl", hash = "sha256:e6cff402102fcf2a763e80fab0a29d3e97a61a1e4bcdeba1d115d8dc24b3e0b4", size = 48714, upload-time = "2026-11-10T00:20:17.84Z" },
 ]
 
 [[package]]
@@ -2823,7 +2823,7 @@ wheels = [
 
 [[package]]
 name = "ramabana"
-version = "0.2.111"
+version = "0.2.112"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "exhash" },
@@ -2837,9 +2837,9 @@ dependencies = [
     { name = "shalya" },
     { name = "uraiyadal" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/12/34/8538c3c504f0c55d1927c1b8eae74282a2ce05d69d1fb05cf5ec9d3712e7/ramabana-0.2.111.tar.gz", hash = "sha256:7551544a8760cdcaa2ad774ac8d301b30153be958f066625ff8b0ebadfc5b063", size = 414116, upload-time = "2026-11-06T08:15:12.722Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/ca/04/f47d14169914882b13fa21f782475ea5b1417592ca2e8ed507e4f970c945/ramabana-0.2.112.tar.gz", hash = "sha256:2522f3de56f07f974e91ee317dc07af773cb0dd7ac737ecf8dd204a4f379d1a3", size = 416131, upload-time = "2026-11-09T00:48:32.55Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/a4/8c/101fc334a8a51a14bd3e5dab399dc02aa1c959be1a51a56cab9a78879beb/ramabana-0.2.111-py3-none-any.whl", hash = "sha256:f3f97d82dec7f2725f38c84f3c516e3b5a6dfc9e536f5626acd19e986dd44dfd", size = 416179, upload-time = "2026-11-06T08:15:11.014Z" },
+    { url = "https://files.pythonhosted.org/packages/73/bd/c5fa059451321b53a43741e9f24a0ad9f66cfde237c6625d973323502e43/ramabana-0.2.112-py3-none-any.whl", hash = "sha256:957000d1a9d3fc195e3bd696545ce47615fc275a654b5aa33756ed25fa8fad3d", size = 418138, upload-time = "2026-11-09T00:48:30.826Z" },
 ]
 
 [package.optional-dependencies]
@@ -3032,14 +3032,14 @@ wheels = [
 
 [[package]]
 name = "rupaka"
-version = "0.0.15"
+version = "0.0.16"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastcore" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/42/1f/ff14a7dd04acbf5c9c637705c05bba5b4f4c1b14faa745697f386130ede8/rupaka-0.0.15.tar.gz", hash = "sha256:41978339d46b7e32f153ab2eb5976c5ab052ec996af722e7cadf30c25266edb5", size = 652144, upload-time = "2026-11-05T03:32:37.032Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b7/2a/621315d6379f5b9693672f40a8739ba48a1d30e007596155bfbc1198735d/rupaka-0.0.16.tar.gz", hash = "sha256:49fb2432f47809479b685829eaed4e8b1784c3739998d145210cb3ad3edd5f7d", size = 666165, upload-time = "2026-11-10T01:03:18.611Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/44/78/4c4b66c7365f2a536f078b7dec53bce4ba7b00976b273adde720e567c882/rupaka-0.0.15-py3-none-any.whl", hash = "sha256:04ffb9df0bfd1fcce25572f1b6369c349950df9acc3b619c595a88c752f9674c", size = 687173, upload-time = "2026-11-05T03:32:35.155Z" },
+    { url = "https://files.pythonhosted.org/packages/32/4e/4044543e14bc1952dd7dc910b45d01dbff571a684be8f690e2b2632df579/rupaka-0.0.16-py3-none-any.whl", hash = "sha256:9a029516939531ef9aaff894b2aecd98947ac44fda1cd8dee33a7872193e9cc9", size = 712656, upload-time = "2026-11-10T01:03:16.838Z" },
 ]
 
 [[package]]
