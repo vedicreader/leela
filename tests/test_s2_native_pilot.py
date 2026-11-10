@@ -1,8 +1,12 @@
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent/'tools'))
+import importlib.util, pytest
 import s2_native_pilot as P
 
+def _from_worktree(): return P.ABHYASA.is_dir() and (s := importlib.util.find_spec('abhyasa')) and Path(s.origin).resolve().is_relative_to(P.ABHYASA.resolve())
+
+@pytest.mark.skipif(not _from_worktree(), reason='the pilot needs abhyasa from the sibling abhyasa-native-learn worktree, which is absent or not the abhyasa that is imported')
 def test_walk_runs_as_a_stoppable_ctx_jobs_job_on_the_assistants_oneshot():
     P.setup()
     from abhyasa.learner import JobStopped
