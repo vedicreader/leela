@@ -3901,7 +3901,7 @@ SOFTWARE.
 | --- | --- | --- |
 | KaTeX (katex/) | 0.16.47 | MIT |
 | Font Awesome Free (fonts/fa-solid-900.woff2) | 5.15.4 | OFL-1.1 (font), MIT (code) |
-| rupaka (lee-rupaka.js, lee-rupaka.css) | 0.0.15 | MIT |
+| rupaka (lee-rupaka.js, lee-rupaka.css) | 0.0.16 | MIT |
 
 ### KaTeX (katex/)
 

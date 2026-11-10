@@ -40,9 +40,8 @@ def test_the_host_calls_beyond_imports_exist():
     for n in ('use_settings', 'use_config'): assert hasattr(learner, n)
 
 
-FIRST_HOST_API_RELEASE = (0, 0, 23)   # the first Abhyasa release with HOST_API: set after the Abhyasa release
+FIRST_HOST_API_RELEASE = (0, 0, 22)   # the first Abhyasa release with HOST_API
 
-@pytest.mark.xfail(strict=False, reason='set after the Abhyasa release')
 def test_the_abhyasa_pin_is_at_or_above_the_first_release_with_host_api():
     import re
     pin = re.search(r'"abhyasa>=([\d.]+)"', (LEARN.parents[2]/'pyproject.toml').read_text())

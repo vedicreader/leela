@@ -201,6 +201,32 @@
 .rk-scene .rk-chip[data-tone="no"], .rk-scene .rk-chip[data-tone="down"] { --tone: var(--rk-no); }
 @media (prefers-reduced-motion: reduce) { .rk-scene .rk-chip:not(.off) { animation: none; } }
 
+/* blocks/layer/layer.css */
+.rk-layer .sky { fill: color-mix(in srgb, var(--rk-acc) 26%, var(--rk-bg)); }
+.rk-layer .w0 { stop-color: var(--rk-no); stop-opacity: 0; }
+.rk-layer .w1 { stop-color: var(--rk-no); stop-opacity: 1; }
+.rk-layer .warm { opacity: calc(var(--tint, 0) * .7); }
+.rk-layer .hill { fill: color-mix(in srgb, var(--rk-fg) calc(var(--tone, .2) * 100%), var(--rk-bg)); }
+.rk-layer .water { fill: color-mix(in srgb, var(--rk-acc) calc(var(--tone, .3) * 100%), var(--rk-bg)); }
+.rk-layer .shine { stroke: var(--rk-bg); stroke-width: .6; stroke-linecap: round; opacity: .7; }
+.rk-layer .disc { fill: color-mix(in srgb, var(--rk-no) calc(30% + var(--tint, 0) * 40%), var(--rk-bg)); }
+.rk-layer .halo { fill: color-mix(in srgb, var(--rk-no) 25%, transparent); }
+.rk-layer.art-cloud ellipse { fill: var(--rk-bg); opacity: .85; }
+.rk-layer .hull { fill: var(--rk-fg); }
+.rk-layer .mast { stroke: var(--rk-fg); stroke-width: .8; }
+.rk-layer .sail { fill: var(--rk-bg); stroke: var(--rk-fg); stroke-width: .6; stroke-linejoin: round; }
+.rk-layer .sail.small { fill: color-mix(in srgb, var(--rk-no) 40%, var(--rk-bg)); }
+.rk-layers .handle .ring { fill: transparent; stroke: var(--rk-acc); stroke-width: .7; stroke-dasharray: 2 1.6; }
+.rk-layers .handle .dot { fill: var(--rk-acc); stroke: var(--rk-bg); stroke-width: .5; }
+.rk-layers .handle { cursor: grab; outline: none; } .rk-layers .handle.held { cursor: grabbing; }
+.rk-layers .handle:hover .ring, .rk-layers .handle.held .ring { fill: color-mix(in srgb, var(--rk-acc) 16%, transparent); }
+.rk-layers .handle:focus-visible .ring { stroke-width: 1.2; stroke-dasharray: none; }
+.rk-layers .handle text.tag { font-size: 4px; fill: var(--rk-fg); paint-order: stroke; stroke: var(--rk-bg); stroke-width: 1.2px; }
+
+/* blocks/layers/layers.css */
+.rk-layers svg.stage { display: block; overflow: hidden; width: 100%; max-width: 760px; aspect-ratio: 16 / 9; border-radius: var(--rk-r-s); border: 1px solid var(--rk-line); background: var(--rk-bg); touch-action: none; user-select: none; }
+.rk-layers .ghost { opacity: .3; }
+
 /* blocks/pair/pair.css */
 .rk-pair .heads { display: flex; justify-content: space-between; gap: var(--rk-s4); font-size: var(--rk-t-small); color: var(--rk-ink2); margin: 0 0 var(--rk-s2); }
 .rk-pair .line { display: flex; align-items: center; gap: var(--rk-s3); }
@@ -223,8 +249,12 @@
 .rk-pixels canvas { display: block; max-width: 100%; height: auto; image-rendering: pixelated; border-radius: var(--rk-s1); }
 
 /* blocks/plot/plot.css */
-.rk-plot .ln { fill: none; stroke: var(--rk-acc); stroke-width: 2; stroke-linejoin: round; }
-.rk-plot .dots circle { fill: var(--rk-acc); }
+.rk-plot { --pc: var(--rk-acc); }
+.rk-plot.t-mute { --pc: var(--rk-mute); } .rk-plot.t-ok { --pc: var(--rk-ok); } .rk-plot.t-no { --pc: var(--rk-no); }
+.rk-plot .ln { fill: none; stroke: var(--pc); stroke-width: 2; stroke-linejoin: round; }
+.rk-plot .gh { fill: none; stroke: var(--pc); stroke-width: 2; stroke-linejoin: round; opacity: .28; }
+.rk-plot .dots circle { fill: var(--pc); }
+.rk-plot .gs { fill: none; stroke: var(--pc); stroke-width: 2; stroke-linejoin: round; stroke-dasharray: 6 5; opacity: .75; }
 
 /* blocks/point/point.css */
 .rk-point .dot { fill: var(--rk-acc); stroke: var(--rk-bg); stroke-width: 2; }
@@ -285,6 +315,18 @@
 /* blocks/stack/stack.css */
 .rk-stack > .rk-b:first-child { margin-top: 0; }
 .rk-stack > .rk-b:last-child { margin-bottom: 0; }
+
+/* blocks/timeline/timeline.css */
+.rk-timeline { --thumb: 16px; }
+.rk-timeline output { font: 500 15px/1 var(--rk-serif); font-variant-numeric: tabular-nums; margin-left: 10px; color: var(--rk-fg); }
+.rk-timeline .rk-tl { display: flex; gap: var(--rk-s3); align-items: flex-start; max-width: 760px; margin-top: 6px; }
+.rk-timeline .rk-tl-play { min-width: 4.5em; }
+.rk-timeline .rk-tl-bar { position: relative; flex: 1; }
+.rk-timeline input { width: 100%; margin: 0; accent-color: var(--rk-acc); display: block; }
+.rk-timeline input:focus-visible, .rk-timeline button:focus-visible { outline: 2px solid var(--rk-acc); outline-offset: 3px; border-radius: 2px; }
+.rk-timeline .rk-tl-marks { position: relative; height: 2.2em; }
+.rk-timeline .rk-tl-mark { position: absolute; top: 2px; left: calc(var(--thumb) / 2 + (100% - var(--thumb)) * var(--p)); transform: translateX(-50%); padding: 2px 6px; font-size: var(--rk-t-meta); background: none; border: 0; border-top: 2px solid var(--rk-line); border-radius: 0; color: var(--rk-mute); cursor: pointer; white-space: nowrap; }
+.rk-timeline .rk-tl-mark.on { color: var(--rk-fg); border-top-color: var(--rk-acc); }
 
 /* blocks/toggle/toggle.css */
 .rk-toggle .sw { display: inline-flex; align-items: center; gap: 10px; }
