@@ -445,7 +445,7 @@ What stays best effort:
 - The scrub worker runs `scrubworker.py` by path on the notebook's own Python, found with `ws.user_python`. Those three files import nothing of Leela. In a py2app bundle `sys.executable` is the app and cannot run a script, so a notebook with no other Python gets a plain failure.
 - `NSMicrophoneUsageDescription` and the audio-input entitlement are in the old app's `setup.py` and `entitlements.plist`, and now in `packaging/kavacha.toml` (`[usage]`, `[entitlements]`) for the thin app.
 - Local speech needs `leela[local]` (`mlx_audio`). Neither app bundles it, and the speech page says to install it.
-- Not checked: a built app. The released versions must also carry the new code: Leela pins `abhyasa>=0.0.16`, `rupaka>=0.0.15`, `kunda>=0.0.15` and `dhrishti>=0.1.13`, and `dhrishti.trace`, `kunda.trace` and the six rupaka demos exist only in unreleased branches.
+- Not checked: a built app. The released versions must also carry the new code: Leela 1.1.0 pins `abhyasa>=0.0.22`, `rupaka>=0.0.16`, `kunda>=0.0.16`, `dhrishti>=0.1.14` and `pullup>=0.0.13`, which carry that code. Before that, it pinned older floors, and `dhrishti.trace`, `kunda.trace` and the six rupaka demos exist only in unreleased branches.
 
 ## Release run
 
@@ -467,4 +467,4 @@ Branches: Leela and Abhyasa on `native-learn`; rupaka, kunda and dhrishti on `ex
    8. Thin app lock: `make lock-wheel V=<version>`, then `make lock V=<version>`, then `make lock-test FRESH=1 EXTRAS=1`.
 5. `make ship V=<version>` is a separate step. Do it only after step 4.
 
-Open mismatch: `leela/__init__.py` has `__version__ = "1.0.4"` (hatch reads it), while the newest `v` tag is `v0.1.13`. The `v` tags are the old scheme. Leela now uses bare tags, and the newest bare tag is `1.0.1` (8 Nov 2026), after `1.0.0` and `0.1.27`. Commits `Leela 1.0.2`, `1.0.3` and `1.0.4` on main set those versions and CHANGELOG entries, but no tag `1.0.2`, `1.0.3` or `1.0.4` exists here. So 1.0.2 to 1.0.4 were bumped and not tagged in this clone; whether GitHub has releases for them was not checked. Before you release, check GitHub, then choose: tag the next release `1.0.5` (move the `Unreleased` entry under it), or tag `1.0.4` if it was never released.
+Status, 10 Nov 2026: released as `1.1.0`. GitHub already had releases `1.0.2`, `1.0.3` and `1.0.4` (the clone had only fetched older tags), so the release is the next minor above `1.0.4`. Shipped in 1.1.0: the floors `abhyasa>=0.0.22`, `rupaka>=0.0.16`, `kunda>=0.0.16`, `dhrishti>=0.1.14` and `pullup>=0.0.13`, the vendored rupaka 0.0.16 bundles, `FIRST_HOST_API_RELEASE` set to `0.0.22` with the `xfail` removed, and `uv.lock` on the released packages. Leela is not on PyPI. Not done: `make lock-wheel`, `make lock`, `make lock-test` and `make ship` are the owner's steps.

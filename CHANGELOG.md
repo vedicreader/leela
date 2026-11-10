@@ -2,7 +2,9 @@
 
 <!-- do not remove -->
 
-## Unreleased
+## 1.1.0
+
+Learn and Create modes. Needs abhyasa 0.0.22, rupaka 0.0.16, kunda 0.0.16, dhrishti 0.1.14 and pullup 0.0.13.
 
 - Learn is a part of Leela. A Learn tab shows an Abhyasa walk in Leela's theme, with its checks, hints, graph, talks and concepts, and no second window or port. The Learn vault is a managed entry in the vault list, with a first-run import (Attach, Back up and copy, Skip). Learn needs abhyasa with `HOST_API` 1.
 - Modes: Code, Learn and Create are workspace presets. Switching keeps the one agent conversation and changes its tools and context. In Code mode the agent sees the active cell.
@@ -13,6 +15,7 @@
 - Trace this run: see the value of each line of a cell.
 - Create mode: a scene of named values that you drag in the tab. The agent can read and set them, and Export page saves one web page. It needs rupaka 0.0.16.
 - Save all no longer fails on an untitled tab: autosave skips it, and Save still asks for a name.
+- Release pipeline: the release step asks for notes in a box when `CHANGELOG.md` has no entry for the version, and runs `nbdev-release-gh` without an editor when it has one. Every pipeline terminal sets `TERM`. Needs pullup 0.0.13.
 
 ## 1.0.4
 
