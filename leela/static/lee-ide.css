@@ -396,7 +396,9 @@ body {
   .lee-modebar [data-learn-fit], .lee-modebar [data-learn-change], .lee-modebar [data-learn-keys] { display: none; }
   .lee-app[data-mode=learn] .lee-git-quickbar, .lee-app[data-mode=learn] .lee-branch-switcher, .lee-app[data-mode=learn] .lee-tab-overflow:not(#taboverflow) { display: none; }
 }
-.lee-workspace-switcher, .lee-header .lee-pill { flex-shrink: 1; }
+.lee-header .lee-pill { flex-shrink: 1; }
+.lee-workspace-switcher { flex-shrink: 0; }
+@media (max-width: 1100px) { .lee-modeswitch .lee-seg { padding: 2px 6px; } .lee-modeswitch { margin: 0; } }
 @media (max-width: 960px) {
   .lee-workspace-switcher { max-width: 150px; }
   .lee-branch-switcher { max-width: 110px; }
