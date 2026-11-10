@@ -2,6 +2,17 @@
 
 <!-- do not remove -->
 
+## 1.2.0
+
+Side pane, release notes gate and save fixes, on top of 1.0.4.
+
+- Save all and autosave skip an untitled tab.
+- The release panel asks for release notes before the GitHub step, and sets a terminal type for every step.
+- The side pane shows Markdown rendered and notebooks as notebooks. It has copy, insert, swap panes and a read-only badge.
+- New commands: "Open to the side" and "Copy cell to the other notebook".
+- Needs ramabana 0.2.114, shalya 0.1.33 and pullup 0.0.14 or newer.
+- Versions 1.1.0 and 1.1.1 added a Learn tab, Create mode, Option-drag scrub and a mode switch. Version 1.2.0 is built on 1.0.4 and does not include them.
+
 ## 1.0.4
 
 Cells: undo no longer strands a running cell.
