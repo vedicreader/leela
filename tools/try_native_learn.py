@@ -160,7 +160,7 @@ def main(argv=None):
     if not a.copy_vault and not a.no_seed:
         from leela.blocks.learn.tools import learn_store
         from tools.seed_learn_demo import seed
-        seeded = bool(seed(learn_store(ws)[1], abh))
+        seeded = bool(seed(learn_store(ws)[1]))
     ref = ws.vaults.get(LEARN)
     ref = (ref.name, ref.path) if ref else (LEARN, f'{learn_path()}  (made when you choose Attach, Back up and copy, or Skip)')
     if refused([ref[1].split('  ')[0]], iso.REAL_STORES): raise SystemExit('the Learn vault is a real store')

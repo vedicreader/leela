@@ -14,7 +14,6 @@ SHELL = """() => { const css = s => { const x = getComputedStyle(document.queryS
 
 
 def _env(monkeypatch):
-    sys.path.insert(0, str(Path(__import__('abhyasa').__file__).resolve().parents[1]/'tests'))
     from talk_data import talk_walk, TALK_RULES
     from abhyasa.learner import temp_learning
     from abhyasa.models import Fake

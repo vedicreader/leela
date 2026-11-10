@@ -81,15 +81,15 @@ def test_port_5001_and_a_busy_port_are_refused_and_a_free_one_is_not_5001():
     assert tnl.pick_port(None) not in (None, 5001)
 
 
-def test_state_folder_under_a_real_store_is_refused_before_anything_is_made():
+def test_state_folder_under_a_real_store_is_refused_before_anything_is_made(tmp_path):
     real = Path.home()/'.config'/'leela'/'try-native-learn-test'
-    with pytest.raises(SystemExit, match='real store'): tnl.main(['--state', str(real)])
+    with pytest.raises(SystemExit, match='real store'): tnl.main(['--abhyasa', str(tmp_path), '--state', str(real)])
     assert not real.exists()
-    with pytest.raises(SystemExit, match='real store'): tnl.main(['--state', str(Path.home()/'.vishalakshi')])
+    with pytest.raises(SystemExit, match='real store'): tnl.main(['--abhyasa', str(tmp_path), '--state', str(Path.home()/'.vishalakshi')])
 
 
 def test_check_refuses_port_5001_after_the_state_is_judged(tmp_path):
-    with pytest.raises(SystemExit, match='port 5001'): tnl.check(tnl.parse(['--state', str(tmp_path), '--port', '5001']))
+    with pytest.raises(SystemExit, match='port 5001'): tnl.check(tnl.parse(['--abhyasa', str(tmp_path), '--state', str(tmp_path), '--port', '5001']))
 
 
 def test_isolated_stores_are_all_under_the_state_folder_and_none_is_real(tmp_path, monkeypatch):
@@ -137,11 +137,11 @@ def test_web_on_the_agent_walk_searches_through_the_patched_fetcher(web, monkeyp
     assert job.status == 'complete' and s['searched'] and 'got a source' in job.result['data']['research']
 
 
-def test_the_preview_takes_rupaka_dhrishti_and_kunda_from_their_worktrees():
+def test_the_preview_takes_rupaka_dhrishti_and_kunda_from_their_worktrees(tmp_path):
     "Without dhrishti and kunda worktrees on the path the cell Trace control says 'needs a newer dhrishti'."
     a = tnl.parse([])
     for n in tnl.LIBS:
         want = ROOT.parent/f'{n}-explorables'
         assert getattr(a, n) == (str(want) if want.is_dir() else None), n
     assert {'rupaka', 'dhrishti', 'kunda'} == set(tnl.LIBS) and tnl.parse(['--dhrishti', '/x']).dhrishti == '/x'
-    with pytest.raises(SystemExit, match='no kunda worktree'): tnl.check(tnl.parse(['--kunda', '/no/such/folder']))
+    with pytest.raises(SystemExit, match='no kunda worktree'): tnl.check(tnl.parse(['--abhyasa', str(tmp_path), '--kunda', '/no/such/folder']))

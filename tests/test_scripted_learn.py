@@ -131,8 +131,13 @@ def test_a_free_prompt_gets_a_paragraph():
     t = reply('Ask about this: Concept: Tides', 'You answer. Write at a US grade 9 level.')
     _clean(t)
 
+@pytest.fixture(scope='session')
+def _browser():
+    from rupaka.check import can_check
+    if not can_check(): pytest.skip('no Chromium for playwright here; run `playwright install chromium`')
+
 @pytest.mark.parametrize('name', ['Equal parts', 'Tides'])
-def test_demo_prompt_gets_a_spec_that_passes_rupakas_validator_and_check(name):
+def test_demo_prompt_gets_a_spec_that_passes_rupakas_validator_and_check(name, _browser):
     from rupaka.agent import demo_prompt, demo_sp
     from rupaka.check import check
     from rupaka.spec import validate
@@ -146,7 +151,7 @@ def test_explainer_prompt_gets_a_scene_that_passes_both_checks(name):
     spec = json.loads(reply(S.explainer_prompt(dict(name=name, statement='One idea.')), S.explainer_sp()))
     assert not list(validate(spec)) and not S.scene_errors(spec) and name.lower() in spec['blocks'][0]['steps'][0]
 
-def test_make_demo_and_make_explainer_save_specs(walk):
+def test_make_demo_and_make_explainer_save_specs(walk, _browser):
     lr, jid, t, j = walk
     slug = j.steps[0]['slug']
     d = S.make_demo(lr, ask, slug, check=True)

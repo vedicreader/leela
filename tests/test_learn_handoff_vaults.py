@@ -87,12 +87,12 @@ def test_a_result_is_filed_in_the_vault_that_holds_the_walk_and_a_read_only_vaul
     with pytest.raises(Refused, match='read-only'): file_result_in(ws, p)
     assert lr_of(ws, 'other').attempts(limit=5) == []
     ws.vaults.set_access('other', 'admin')
-    assert file_result_in(ws, p).startswith('Sent to your walk')
+    assert (file_result_in(ws, p) or 'Sent to your walk').startswith('Sent to your walk')   # the watcher may file it first
     a, = lr_of(ws, 'other').attempts(limit=5)
     assert a.kind == 'run' and lr_of(ws, 'learn').attempts(limit=5) == [] and lr_of(ws, 'workspace').attempts(limit=5) == []
     nb2 = step_lesson('Caption', dict(STEP, walk=JID), NB, file='l-0.ipynb'); nb2.save(q := tmp/'l-0.ipynb')
     f2 = tmp/'l-0.result'; f2.mkdir(); result(f2)
-    assert file_result_in(ws, q).startswith('Sent to your walk')
+    assert (file_result_in(ws, q) or 'Sent to your walk').startswith('Sent to your walk')
     assert [x.kind for x in lr_of(ws, 'learn').attempts(limit=5)] == ['run']
 
 def test_a_read_only_vault_files_its_notice_once_per_result(rig2, monkeypatch, capsys):

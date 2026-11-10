@@ -15,7 +15,6 @@ MAIN = "() => { const r = document.querySelector('.abh main').getBoundingClientR
 
 
 def _env(monkeypatch):
-    sys.path.insert(0, str(Path(__import__('abhyasa').__file__).resolve().parents[1]/'tests'))
     from talk_data import talk_walk
     from abhyasa.learner import temp_learning
     from abhyasa.path import join_course

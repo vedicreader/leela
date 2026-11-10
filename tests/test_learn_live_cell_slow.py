@@ -14,7 +14,6 @@ CODE = dict(src='# Make x 4, then run\nx = 3\nprint(x * 2)', watch=['x'], expect
 
 
 def _env(monkeypatch):
-    sys.path.insert(0, str(Path(__import__('abhyasa').__file__).resolve().parents[1]/'tests'))
     from talk_data import talk_walk
     from abhyasa.learner import temp_learning
     from abhyasa.path import check_code

@@ -3,16 +3,15 @@ import re, struct, sys, time, zlib
 from fastcore.basics import first
 from pathlib import Path
 
-ABHYASA = Path(__file__).resolve().parent.parent.parent/'abhyasa-native-learn'
 DAY = 86400
 ATTEMPTS = [('softmax', 'What does softmax give for a list of scores?', 'Weights above 0 that add to 1.', True, 9, 6),
             ('softmax', 'Why do large scores matter to softmax?', 'They get all the weight.', True, 7, 4),
             ('sequential-computation', 'Why can a recurrent model not run in parallel?', 'It needs the last step first.', True, 8, 3),
             ('scaling-by-the-root-of-dk', 'Why divide by the root of dk?', 'To make the scores smaller.', False, 4, 1)]
 
-def fixtures(abh=ABHYASA):
-    "The walk, talk and flow fixtures of Abhyasa's tests, found beside its worktree."
-    t = str(Path(abh)/'tests')
+def fixtures():
+    "The walk, talk and flow fixtures, vendored from Abhyasa's tests into `tests/`."
+    t = str(Path(__file__).resolve().parent.parent/'tests')
     if t not in sys.path: sys.path.append(t)
     import walk_data, talk_data, flows
     return walk_data, talk_data, flows
@@ -35,11 +34,11 @@ URL = 'https://arxiv.org/abs/1706.03762'
 
 def seeded(lr): return first(j.id for j in lr.journeys() if j.get('demo') == 'paper')
 
-def seed(lr, abh=ABHYASA, say=print):
+def seed(lr, say=print):
     "Put a paper walk, a course, a talk and attempts over several days on `lr`. Idempotent; an `lr` that holds other walks is left alone. Returns the walk id, or None."
     if jid := seeded(lr): circuits(lr, say); say('demo data is already in this vault; nothing added'); return jid
     if len(lr.journeys()): say('this vault holds learning of its own; no demo data added'); return
-    wd, td, fl = fixtures(abh)
+    wd, td, fl = fixtures()
     import rupaka.check
     from abhyasa.models import Fake
     from abhyasa.path import journey_from_source, join_course
