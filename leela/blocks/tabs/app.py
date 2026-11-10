@@ -148,7 +148,8 @@ def connect(app, ctx):
             docs.docs[key] = nb
             t.nb_lang = nb.lang
             d = {'kind': 'notebook', 'path': t.path, 'title': t.title, 'dirty': t.dirty,
-                 'lang': nb.lang, 'disk_version': held, 'stale': stale, 'rise': nb.rise, 'version': nb.version}
+                 'lang': nb.lang, 'disk_version': held, 'stale': stale, 'rise': nb.rise, 'version': nb.version,
+                 'read_only': bool(t.path and ctx.fs.read_only(t.path))}
             # A running cell changes its outputs before the version moves, so the page's copy is only the same when nothing runs.
             if have.get(key) == nb.version and not any(c.running for c in nb.cells): return d | {'same': True}
             return d | {'cells': [c.dict() for c in nb.cells]}

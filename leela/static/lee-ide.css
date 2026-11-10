@@ -4101,3 +4101,8 @@ body .board-panel:not(.inline) { top: var(--lee-panel-top, var(--panel-top)); ri
   --lee-green: #0a3069; --lee-purple: #0550ae; --lee-blue: #8250df; --lee-yellow: #953800;
 }
 
+/* The side pane: a notebook's cells and a Markdown stage size to their content, and the pane scrolls. */
+.lee-editor-secondary .lee-split-body .lee-cm, .lee-editor-secondary .lee-md-stage .lee-cm { height: auto; }
+.lee-editor-secondary .lee-md-stage { padding: 0 8px 8px; }
+.lee-split-body [data-side-more] { margin: 8px 0 8px 52px; }
+.lee-nbv-out { min-width: 0; }

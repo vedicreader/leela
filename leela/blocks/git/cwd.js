@@ -19,7 +19,7 @@ async function paintNotebookGitMarks() {
 }
 function repaintNotebookGitMarks() {
   const cells = lee.notebookGit?.cells || {}, lines = lee.notebookGit?.lines || {};
-  $$('.lee-cell').forEach(el => {
+  $$('#editor .lee-cell').forEach(el => {
     const kind = cells[el.dataset.id] || '';
     el.classList.toggle('changed', !!kind);
     el.classList.toggle('changed-added', kind === 'added');

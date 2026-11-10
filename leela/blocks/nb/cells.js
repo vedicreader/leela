@@ -703,7 +703,7 @@ function outputEl(o, c = null, i = 0) {
 }
 
 function paintSel() {
-  $$('.lee-cell').forEach(el => {
+  $$('#editor .lee-cell').forEach(el => {
     const i = +el.dataset.i, selected = lee.cellSelection.has(i) || (!lee.cellSelection.size && i === lee.sel);
     el.classList.toggle('sel', selected); el.setAttribute('aria-selected', String(selected));
   });
