@@ -2651,7 +2651,7 @@ requires-dist = [
     { name = "openpyxl", specifier = ">=3.1.5" },
     { name = "orjson", specifier = ">=3.9" },
     { name = "packaging", specifier = ">=24.0" },
-    { name = "pullup", specifier = ">=0.0.14" },
+    { name = "pullup", specifier = ">=0.0.15" },
     { name = "pyright", specifier = ">=1.1.400" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-fasthtml", specifier = ">=0.14.9" },
@@ -4215,7 +4215,7 @@ wheels = [
 
 [[package]]
 name = "pullup"
-version = "0.0.14"
+version = "0.0.15"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cfeasy" },
@@ -4228,9 +4228,9 @@ dependencies = [
     { name = "pyyaml" },
     { name = "vpseasy" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/33/9b/0ac3a58692cd5cc072b4f65a51442d5191c6c533965ed9ed6f02775a05d7/pullup-0.0.14.tar.gz", hash = "sha256:bc43cf91ab4fdf91ceec7f1a9eba9798d722e2e851372c817c1d2af7dd7b2185", size = 43045, upload-time = "2026-11-10T03:31:36.945Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/70/90/53112a625f611d6335f4ccf8448b3293069b9e48a527c3f9153ff1944fba/pullup-0.0.15.tar.gz", hash = "sha256:99c793932eedce216d8826a4a306271da891c2289800d89bfc9a5b6a6464bb69", size = 43240, upload-time = "2026-11-11T00:52:25.808Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/9d/4f/07aa33b5ca4905041744ffcce27c0710fdf03b89acba8779444dba2e90f2/pullup-0.0.14-py3-none-any.whl", hash = "sha256:b2a1031b719f868b4634ad5afd84cca3c4dee3be4b5e78bc5f7a13eaf61c8a82", size = 48999, upload-time = "2026-11-10T03:31:35.774Z" },
+    { url = "https://files.pythonhosted.org/packages/ad/97/4221e098c9081ce3c3f22e5e7c3522dab9ba0a91af75c5805b489c97c22c/pullup-0.0.15-py3-none-any.whl", hash = "sha256:58e9237086ea33ae78aad44bfd3d6b48fdc770e835b5e57883ec60b80e7d4ebf", size = 49205, upload-time = "2026-11-11T00:52:24.631Z" },
 ]
 
 [[package]]

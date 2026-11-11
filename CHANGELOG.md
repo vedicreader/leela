@@ -2,6 +2,15 @@
 
 <!-- do not remove -->
 
+## 1.2.1
+
+Release notes fixes for nbdev v3 projects.
+
+- The release panel reads the version of an nbdev v3 project from its `__init__.py`. Before, it read no version, so it asked for notes that were already in CHANGELOG.md and could not save new ones.
+- The notes button shows the notes box again after you cancel it. Before, the box stayed hidden when the project had no version.
+- A project with no version that Leela can read gets a clear message when you save notes.
+- Needs pullup 0.0.15 or newer.
+
 ## 1.2.0
 
 Side pane, release notes gate and save fixes, on top of 1.0.4.

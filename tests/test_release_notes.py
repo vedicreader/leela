@@ -108,6 +108,15 @@ def test_empty_notes_are_refused_and_nothing_is_written(tmp_path, fake):
         assert row(client.get('/releases', params={'repo': str(root)}).json())['status'] == 'needs_notes'
     assert not (root/'CHANGELOG.md').exists() and not calls(fake)
 
+def test_notes_for_a_project_with_no_readable_version_are_refused_in_plain_words(tmp_path, fake):
+    root = project(tmp_path)
+    (root/'settings.ini').write_text('[DEFAULT]\nlib_name = demo\n'); (root/'pyproject.toml').write_text('[project]\nname = "demo"\n')
+    with served(tmp_path) as client:
+        act(client, root, op='start', step='gh', auto=False)
+        r = act(client, root, op='notes', text='- new')
+    assert r.status_code == 400 and 'cannot read the version' in r.json()['error']
+    assert not (root/'CHANGELOG.md').exists() and not calls(fake)
+
 def test_notes_with_no_step_waiting_are_refused(tmp_path, fake):
     root = project(tmp_path)
     with served(tmp_path) as client:
@@ -167,3 +176,8 @@ def test_the_panel_asks_for_notes_in_plain_words():
     js = (Path(__file__).resolve().parent.parent/'leela'/'blocks'/'pipelines'/'releases.js').read_text()
     for need in ('Release notes for ${esc(n.version)}', 'Save and release', 'Cancel', 'Write the release notes first.', "op: 'notes'"):
         assert need in js, need
+
+def test_the_notes_button_brings_back_a_cancelled_box_whatever_the_version():
+    "Cancel hides the box by version. Reopening with '' matched an empty version, so the box never came back."
+    js = (Path(__file__).resolve().parent.parent/'leela'/'blocks'/'pipelines'/'releases.js').read_text()
+    assert "relUI.noteHide = ''" not in js and js.count('relUI.noteHide = null') == 2

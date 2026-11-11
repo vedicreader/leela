@@ -2489,7 +2489,7 @@ async function saveNotes() {
   relUI.noteBusy = true; relUI.noteErr = ''; renderReleasesPanel();
   try {
     relUI.data = await post('/releases/action', {op: 'notes', repo: projectRepo(), text});
-    relUI.draft = ''; relUI.noteHide = '';
+    relUI.draft = ''; relUI.noteHide = null;
     await openReleaseTerm(relUI.data.root, 'release');
   } catch (e) { relUI.noteErr = e.message || String(e); }
   relUI.noteBusy = false;
@@ -2503,7 +2503,7 @@ function wireNotes(host, d) {
     form.onsubmit = e => { e.preventDefault(); saveNotes(); };
     if (relUI.noteFocus !== d.notes.version) { relUI.noteFocus = d.notes.version; ta.focus(); }
   }
-  host.querySelectorAll('[data-rel-notes]').forEach(b => b.onclick = () => { relUI.noteHide = ''; relUI.noteFocus = ''; renderReleasesPanel(); });
+  host.querySelectorAll('[data-rel-notes]').forEach(b => b.onclick = () => { relUI.noteHide = null; relUI.noteFocus = ''; renderReleasesPanel(); });
 }
 function renderReleasesPanel() {
   const host = $('#releasespanel'); if (!host) return;

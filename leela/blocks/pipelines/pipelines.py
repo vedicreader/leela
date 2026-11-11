@@ -52,6 +52,7 @@ class Release(_Leela, _Release):
         text = str(text or '').strip()
         if not text: raise NotesError('Write the release notes first.')
         st = changelog_state(self.root)
+        if not st['version']: raise NotesError(f'Leela cannot read the version of {self.root.name}, so it cannot name the notes. Set the version, then press continue.')
         if st['has']: return row['id']
         path = write_changelog(self.root, st['version'], text)
         try:
