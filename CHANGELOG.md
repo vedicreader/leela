@@ -2,6 +2,14 @@
 
 <!-- do not remove -->
 
+## 1.2.2
+
+Models after the rishi 0.1.70 split.
+
+- Needs ramabana 0.2.115, which needs `rishi[claude]`. rishi 0.1.70 moved the Claude SDK into an extra, so without it the default Claude models would disappear.
+- The `local` extra adds `rishi[litert]`, which the Gemma download needs, beside `rishi[mlx]` and `rishi[llama]`.
+- Needs rishi 0.1.70 or newer.
+
 ## 1.2.1
 
 Release notes fixes for nbdev v3 projects.
