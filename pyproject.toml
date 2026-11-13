@@ -16,10 +16,10 @@ classifiers = [
 ]
 # Everything leela imports, and nothing it does not: a transitive is not a contract.
 dependencies = [
-    "ramabana[cli]>=0.2.115",   # 0.2.115 needs rishi[claude], which keeps the claude/ models after rishi 0.1.70; 0.2.114 peer tools and the image model; 0.2.112 needs uraiyadal 0.0.22; a stop fails only the asks its turn ran, and a typed prompt no longer ends work together mode
-    "abhyasa>=0.0.16",   # the tutor of the screen guide; its board is rupaka's
-    "rupaka>=0.0.15",   # the screen guide's board (rupaka.board); lee-rupaka.js and lee-rupaka.css are written from this version
-    "shalya>=0.1.33",   # 0.1.33 raised with ramabana 0.2.114; 0.1.32 ASK_TOOLS and arg_write; 0.1.31 own_python and OwnPythonHost
+    "ramabana[cli]>=0.2.116",   # 0.2.116 needs rishi[claude] 0.1.71, which needs aidialog 0.0.42; 0.2.115 needs rishi[claude], which keeps the claude/ models after rishi 0.1.70; 0.2.114 peer tools and the image model; 0.2.112 needs uraiyadal 0.0.22; a stop fails only the asks its turn ran, and a typed prompt no longer ends work together mode
+    "abhyasa>=0.0.28",   # the tutor of the screen guide; its board is rupaka's; 0.0.28 needs ramabana 0.2.116
+    "rupaka>=0.0.15",   # the screen guide's board (rupaka.board); lee-rupaka.js and lee-rupaka.css are written from 0.0.18
+    "shalya>=0.1.34",   # 0.1.34 grep searches a nested build or dist folder and gives a file path_filter its own path; 0.1.33 raised with ramabana 0.2.114; 0.1.32 ASK_TOOLS and arg_write; 0.1.31 own_python and OwnPythonHost
     "gheasy>=0.0.21",
     "fastcore>=1.7.0",
     "kavacha>=0.0.21",
@@ -62,7 +62,7 @@ dependencies = [
     "jupygate>=0.0.1",
     "jupyasyncclient>=0.2.12",
     "jupywire>=0.1.1",
-    "dhrona>=0.1.18",
+    "dhrona>=0.1.26",   # 0.1.26 imports chat2dlg from aihist: aidialog 0.0.38 removed aidialog.hist
     "mammoth>=1.13.0",
     "python-pptx>=1.0.2",
     "openpyxl>=3.1.5",

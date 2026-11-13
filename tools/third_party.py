@@ -15,7 +15,7 @@ LICENCE_FILES = ('LICENSE', 'LICENCE', 'COPYING', 'LICENSE.md', 'LICENSE.txt', '
 #: Vendored files that no npm lock describes: (what, version, licence, licence file under leela/vendor)
 OTHERS = (('KaTeX (katex/)', '0.16.47', 'MIT', 'katex/LICENSE-KaTeX.txt'),
           ('Font Awesome Free (fonts/fa-solid-900.woff2)', '5.15.4', 'OFL-1.1 (font), MIT (code)', 'fonts/LICENSE-Font-Awesome.txt'),
-          ('rupaka (lee-rupaka.js, lee-rupaka.css)', '0.0.15', 'MIT', None))
+          ('rupaka (lee-rupaka.js, lee-rupaka.css)', '0.0.18', 'MIT', None))
 
 def lock_pkgs(lock=LOCK):
     "`{name: version}` of each package `lock` installs, without the build tools."

@@ -12,7 +12,11 @@ TAGS = set('a abbr b blockquote br caption cite code col colgroup dd del details
 CLASS_OK = re.compile(r'^(language-|hl-|footnote-)')
 CLASS_NAMES = {'footnotes', 'task-list', 'xref', 'math', 'inline', 'display'}
 ID_OK = re.compile(r'^[A-Za-z][\w:.-]{0,80}$')
-BAD_ATTRS = {'srcdoc', 'style', 'formaction', 'action'}
+BAD_ATTRS = {'srcdoc', 'formaction', 'action'}
+#: mdhtml's table and column widths are the only style: `table-layout:fixed` on a table, a length or mdhtml's `calc` on a table or a column.
+LEN = r'(?:0|auto|\d+(?:\.\d+)?(?:px|%|em|rem|ch|ex|in|cm|mm|pt|pc|vw|vh))'
+WIDTH = re.compile(rf'width:(?:{LEN}|calc\(\(100%(?: - {LEN})+\) \* \d+(?:\.\d+)?\))', re.ASCII)
+def style_ok(tag, v): return tag in ('table', 'col') and all(WIDTH.fullmatch(d) or (tag == 'table' and d == 'table-layout:fixed') for d in v.split(';'))
 DATA_IMG = re.compile(r'^data:image/(png|jpeg|gif|webp|avif);base64,')
 
 def fence(h): return f'```{{=html}}\n{h}\n```'
@@ -53,6 +57,8 @@ ATTACKS = {
     'attachment entity tab href': fence('<a href="attach&#9;ment:a.png">x</a>'),
     'attachment space href': fence('<a href=" attachment:a.png">x</a>'),
     'attachment image link': '[![a](attachment:a.png)](attachment:a.png)',
+    'table style': '| a | b |\n|---|---|\n| 1 | 2 |\n{: style="position:fixed;inset:0"}\n\n| c | d |\n|-|---|\n| 3 | 4 |\n{: width="1px;background:url(javascript:alert(1))" colwidths="1px;color:red 1fr"}',
+    'raw table style': fence('<table style="width:10px;background:url(x)"><colgroup><col style="width:calc(1px);color:red"><col style="width:5px"><col style="width:١٠px"><col style="width:1px&#59;color:red"></colgroup></table><p style="width:10px">x</p>'),
 }
 
 def render(text, **kw):
@@ -74,7 +80,7 @@ def violations(html):
         if e.name not in TAGS: out.append(f'element <{e.name}>')
         for k, v in dict(e.attrs).items():
             v = str(v or '')
-            if k.startswith('on') or k in BAD_ATTRS: out.append(f'attribute {k} on <{e.name}>')
+            if k.startswith('on') or k in BAD_ATTRS or (k == 'style' and not style_ok(e.name, v)): out.append(f'attribute {k}={v!r} on <{e.name}>')
             elif k.startswith('data-') and k != 'data-id': out.append(f'attribute {k}')
             elif k == 'class': out += [f'class {t}' for t in v.split() if not (CLASS_OK.match(t) or t in CLASS_NAMES)]
             elif k == 'id' and not ID_OK.match(v): out.append(f'id {v!r}')
@@ -166,7 +172,7 @@ def test_ordinary_markdown_renders_node_for_node_as_mdhtml_does(monkeypatch, hl)
     got = render(DOC, allow_raw=True)
     assert shape(fast5ever.parse_fragment(got).children) == shape(fast5ever.parse_fragment(want).children)
     kinds = {n[0] for n in shape(fast5ever.parse_fragment(got).children)}
-    assert {'#comment', 'table', 'details', 'ul', 'pre', 'section'} <= kinds
+    assert {'#comment', 'table', 'details', 'ul', 'pre', 'section'} <= kinds and not violations(got)
     rk = [e for e in walk(fast5ever.parse_fragment(got).children) if 'language-rupaka' in str(dict(e.attrs).get('class') or '')]
     assert [text_of(e) for e in rk] == [text_of(e) for e in walk(fast5ever.parse_fragment(want).children) if 'language-rupaka' in str(dict(e.attrs).get('class') or '')]
     assert rk and '"note": "a < b && c > d"' in text_of(rk[0])

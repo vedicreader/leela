@@ -3,7 +3,7 @@
    No network, no eval, no dependencies. Blocks and fns register with Rupaka.block and Rupaka.fn; boot.js mounts every [data-rupaka]. */
 (() => {
   if (window.Rupaka && window.Rupaka.core) return;   // the bundle came in twice (an htmx swap): keep the first copy
-  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.15', schema: 1};   // bundle() writes in rupaka.__version__
+  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.18', schema: 1};   // bundle() writes in rupaka.__version__
   const NS = 'http://www.w3.org/2000/svg', BAD = new Set(['__proto__', 'prototype', 'constructor']);
 
   function attrs(e, a) {
@@ -96,7 +96,7 @@
 
   // In an explainer, a block with `step` shows from that step of the state key `step`. These blocks use `step` for their own meaning.
   // A Python test keeps this list equal to the manifests that have a `step` prop.
-  R.ownStep = new Set(['body', 'force', 'grid', 'label3d', 'point', 'shot', 'slider', 'wheel']);
+  R.ownStep = new Set(['body', 'force', 'grid', 'label3d', 'layer', 'point', 'shot', 'slider', 'timeline', 'wheel']);
   function build(b, ctx) {
     const f = R.blocks[b.type];
     if (!f) throw new Error(`unknown block "${b.type}"`);
@@ -252,6 +252,19 @@
   });
 })();
 
+/* fns/ease.js */
+/* ease: a number moved from 0 to 1 along a curve (linear, in, out, inout, step). The curves are in Rupaka.EASE, and keyframes uses them too. */
+(() => {
+  const EASE = {linear: u => u, in: u => u * u, out: u => 1 - (1 - u) * (1 - u), inout: u => u < .5 ? 2 * u * u : 1 - (2 - 2 * u) * (2 - 2 * u) / 2, step: u => u < 1 ? 0 : 1};
+  Rupaka.EASE = EASE;
+  Rupaka.num = (v, st, d) => v == null ? d : typeof v === 'number' ? v : +Rupaka.get(st, v);
+  Rupaka.fn('ease', (d, st) => {
+    const [a, b] = d.over || [0, 1], kind = d.kind || 'linear';
+    if (!Object.hasOwn(EASE, kind)) throw new Error(`ease: "${kind}" is not a curve`);
+    return EASE[kind](Math.min(1, Math.max(0, (Rupaka.num(d.in, st) - a) / (b - a))));
+  });
+})();
+
 /* fns/expr.js */
 /* expr: a formula in a tiny safe grammar: numbers, names, + - * / ^, parentheses, and the functions
    sin cos tan exp log sqrt abs min max floor ceil round. Names are state keys; `over: {x: [min, max, n]}` gives a series of {x, y}.
@@ -341,6 +354,20 @@ Rupaka.fn('sort', (d, st) => {
 });
 Rupaka.fn('fmt', (d, st) => Rupaka.fmt(d.text, st));
 
+/* fns/keyframes.js */
+/* keyframes: the value at time `in` from [[t, v], ...] keys that go up in t. Before the first key it holds the first value, after the last key the last.
+   Each segment eases from its own key: [t, v, 'out'] sets the curve of that segment; `ease` is the default (linear). */
+Rupaka.fn('keyframes', (d, st) => {
+  const ks = d.keys, x = Rupaka.num(d.in, st), E = Rupaka.EASE;
+  if (!Array.isArray(ks) || !ks.length) throw new Error('keyframes: needs a list of [t, value] keys');
+  if (x <= ks[0][0]) return ks[0][1];
+  const i = ks.findIndex(k => x < k[0]);
+  if (i < 0) return ks[ks.length - 1][1];
+  const [t0, v0, e] = ks[i - 1], [t1, v1] = ks[i], kind = e || d.ease || 'linear';
+  if (!Object.hasOwn(E, kind)) throw new Error(`keyframes: "${kind}" is not a curve`);
+  return v0 + (v1 - v0) * E[kind]((x - t0) / (t1 - t0));
+});
+
 /* fns/lookup.js */
 /* lookup: the row of a table for a key. A whole number picks by position; any other value picks the row whose `by` field (default id) matches. */
 Rupaka.fn('lookup', (d, st, spec) => {
@@ -374,6 +401,31 @@ Rupaka.fn('rules', (d, st, spec) => {
   alts.sort((x, y) => rank(x) - rank(y) || x.localeCompare(y));
   return {...hit, out, alts};
 });
+
+/* fns/signal.js */
+/* sample and dft: signals from a formula in time. `sample` takes the value at each tick of a rate; `dft` gives the strength of each whole frequency.
+   Both read the formula with Rupaka.expr, so there is no eval. The Python twins are in nbs/00_spec.ipynb. */
+(() => {
+  const cache = {}, f_of = src => cache[src] ||= Rupaka.expr(src), num = (d, st, k) => +(typeof d[k] === 'number' ? d[k] : st[d[k]]);
+  // sample: the points {x, y} of the formula at x = lo, lo + 1/rate, ... up to hi, with `over: {"t": [lo, hi]}`.
+  Rupaka.fn('sample', (d, st) => {
+    const f = f_of(d.expr), [name, [lo, hi]] = Object.entries(d.over)[0], rate = num(d, st, 'rate');
+    if (!(rate > 0)) throw new Error('sample: rate must be above 0');
+    const n = Math.floor((hi - lo) * rate + 1e-9) + 1;
+    if (n > 4000) throw new Error('sample: more than 4000 points');
+    return Array.from({length: n}, (_, k) => { const x = lo + k / rate; return {x, y: f({...st, [name]: x})}; });
+  });
+  // dft: the amplitude of each frequency k / (hi - lo) for k = 0 .. upto, from n ticks of the formula over [lo, hi) with `over: {"t": [lo, hi, n]}`.
+  Rupaka.fn('dft', (d, st) => {
+    const f = f_of(d.expr), [name, [lo, hi, n = 64]] = Object.entries(d.over)[0], T = hi - lo, up = Math.min(d.upto ?? n / 2, Math.floor(n / 2));
+    const ys = Array.from({length: n}, (_, i) => f({...st, [name]: lo + T * i / n}));
+    return Array.from({length: up + 1}, (_, k) => {
+      let re = 0, im = 0;
+      ys.forEach((y, i) => { const a = 2 * Math.PI * k * i / n; re += y * Math.cos(a); im -= y * Math.sin(a); });
+      return {id: String(k / T), value: Math.hypot(re, im) / n * (k === 0 || 2 * k === n ? 1 : 2)};
+    });
+  });
+})();
 
 /* fns/softmax.js */
 /* softmax: shares from scores, exp(x / t) / sum, with temperature t (a key or a number). A row of a grid works too. */
@@ -422,9 +474,9 @@ Rupaka.fn('softmax', (d, st) => {
     const svg = sv('svg', {viewBox: `0 0 ${W} ${H}`, role: 'group', 'aria-label': b.label || 'axes'});
     plane.svg = svg; plane.clip = `url(#${id})`;
     const g = sv('g', {class: 'grid'});
-    const xs = ticks(x0, x1, b.xstep || nice(x0, x1, 10)), ys = line ? [] : ticks(y0, y1, b.ystep || nice(y0, y1, 8));
+    const xs = ticks(x0, x1, b.xstep || (b.xlog ? 1 : nice(x0, x1, 10))), ys = line ? [] : ticks(y0, y1, b.ystep || nice(y0, y1, 8));
     const ax = line ? T : Y(Math.min(y1, Math.max(y0, 0))), ay = X(Math.min(x1, Math.max(x0, 0)));
-    const xl = xs.map(v => show(v, 3)), xon = every(xs, xs.map(X), i => 7.5 * xl[i].length), yon = every(ys, ys.map(Y), () => 13, 2);
+    const xl = xs.map(v => b.xlog ? (v >= 3 ? `${show(10 ** (v - 3), 3)}k` : show(10 ** v, 3)) : show(v, 3)), xon = every(xs, xs.map(X), i => 7.5 * xl[i].length), yon = every(ys, ys.map(Y), () => 13, 2);
     xs.forEach((v, i) => { g.append(sv('line', {class: v === 0 && !line ? 'zero' : 'hair', x1: X(v), x2: X(v), y1: line ? T - 5 : T, y2: line ? T + 5 : H - B}),
       ...xon[i] ? [sv('text', {class: 'num', x: X(v), y: line ? T + 22 : H - B + 18, 'text-anchor': 'middle', text: xl[i]})] : []); });
     ys.forEach((v, i) => { g.append(sv('line', {class: v === 0 ? 'zero' : 'hair', x1: L, x2: W - Rm, y1: Y(v), y2: Y(v)}),
@@ -836,6 +888,114 @@ Rupaka.block('label3d', (b, ctx) => {
   return S.part(b, {anchor: () => S.T ? S.point(b.on, b.at) : null}, S.chip(b, b.text));
 });
 
+/* blocks/layer/layer.js */
+/* layer: one shape on the stage of a layers block. Its numbers are values or state keys. With drag, a handle writes the keys of x and y.
+   A/D (←/→) and W/S (↑/↓) move the handle, ⇧ moves ten steps. While a change holds, a faint ghost stays where the layer was. */
+(() => {
+  const {sv} = Rupaka, HOR = 58;
+  let seq = 0;
+  const ART = {
+    sky: () => {
+      const id = `rk-warm-${++seq}`;
+      return sv('g', {}, sv('defs', {}, sv('linearGradient', {id, x1: 0, y1: 0, x2: 0, y2: 1},
+        sv('stop', {offset: 0, class: 'w0'}), sv('stop', {offset: 1, class: 'w1'}))),
+        sv('rect', {class: 'sky', x: -60, y: -5, width: 280, height: 100}), sv('rect', {class: 'warm', x: -60, y: -5, width: 280, height: 100, fill: `url(#${id})`}));
+    },
+    hill: b => {
+      let d = 'M -10 100';
+      for (let x = -10; x <= 210; x += 5) d += ` L ${x} ${(HOR - 10 - 8 * Math.sin(x * .045 + (b.seed || 0)) - 5 * Math.sin(x * .11 + (b.seed || 0) * 2.3)).toFixed(2)}`;
+      return sv('path', {class: 'hill', d: d + ' L 210 100 Z', style: b.tone != null ? `--tone: ${b.tone}` : null});
+    },
+    water: b => sv('g', {style: b.tone != null ? `--tone: ${b.tone}` : null}, sv('rect', {class: 'water', x: -60, y: HOR, width: 280, height: 40}),
+      ...[[-20, 66, 14], [18, 72, 20], [60, 64, 12], [92, 76, 22], [130, 68, 16], [170, 74, 18]].map(([x, y, w]) => sv('line', {class: 'shine', x1: x, y1: y, x2: x + w, y2: y}))),
+    sun: () => sv('g', {}, sv('circle', {class: 'halo', r: 10}), sv('circle', {class: 'disc', r: 5.5})),
+    cloud: () => sv('g', {}, sv('ellipse', {cx: 0, cy: 0, rx: 9, ry: 3}), sv('ellipse', {cx: -4, cy: -2, rx: 5, ry: 3}), sv('ellipse', {cx: 4, cy: -1.5, rx: 5.5, ry: 3.2})),
+    boat: () => sv('g', {}, sv('path', {class: 'hull', d: 'M -10 0 L 10 0 L 6.5 4.5 L -6.5 4.5 Z'}), sv('line', {class: 'mast', x1: 0, y1: 0, x2: 0, y2: -13}),
+      sv('path', {class: 'sail', d: 'M 1 -12 L 9 -2 L 1 -2 Z'}), sv('path', {class: 'sail small', d: 'M -1 -10 L -6 -2 L -1 -2 Z'})),
+  };
+
+  Rupaka.block('layer', (b, ctx) => {
+    const {sv, show, num} = Rupaka, s = ctx.s, P = ctx.stage;
+    if (!P) throw new Error('a layer must be inside layers');
+    if (!ART[b.art]) throw new Error(`unknown art "${b.art}"`);
+    const drag = b.drag || '', step = b.step ?? .5, ghosted = b.ghost ?? !!drag;
+    const body = ART[b.art](b), posed = sv('g', {class: 'pose'}, body);
+    const gpose = ghosted ? sv('g', {class: 'ghost', 'aria-hidden': 'true'}, body.cloneNode(true)) : null;
+    if (gpose) gpose.style.display = 'none';
+    const node = sv('g', {class: `art-${b.art}`}, gpose, posed);
+    const pose = st => {
+      const yv = num(b.y, st, 0);
+      return {x: num(b.x, st, 0) - P.pan(st) * (b.depth || 0), y: b.up ? P.H - yv : yv, k: num(b.scale, st, 1), r: num(b.rotate, st, 0), o: num(b.opacity, st, 1), tint: num(b.tint, st, 0)};
+    };
+    const tf = p => `translate(${p.x} ${p.y}) rotate(${p.r}) scale(${p.k})`;
+    const hold = on => ctx.root.dispatchEvent(new CustomEvent('rk-hold', {detail: {on}}));
+    let hand = null, txt, ring, timer;
+    if (drag) {
+      ring = sv('circle', {class: 'ring', r: 7});
+      txt = sv('text', {class: 'tag', 'text-anchor': 'middle'});
+      hand = sv('g', {class: 'handle', tabindex: 0, role: 'slider', 'aria-label': b.label || b.art}, ring, sv('circle', {class: 'dot', r: 1.6}), txt);
+      P.top.append(hand);
+      const rng = {x: b.xr || [0, P.W], y: b.yr || [0, P.H]}, axes = [...drag];
+      const clamp = (v, [lo, hi]) => +Math.min(hi, Math.max(lo, Math.round(v / step) * step)).toFixed(6);
+      const at = e => { const pt = P.svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; return pt.matrixTransform(P.svg.getScreenCTM().inverse()); };
+      const put = (x, y) => { if (x != null && x !== s.get(b.x)) ctx.put(b, b.x, x); if (y != null && y !== s.get(b.y)) ctx.put(b, b.y, y); };
+      let off = null;
+      hand.addEventListener('pointerdown', e => {
+        if (!ctx.live(b.lock)) return;
+        e.stopPropagation(); hand.setPointerCapture(e.pointerId); hand.classList.add('held'); hold(true);
+        const p = at(e), h = pose(s.st); off = {x: p.x - h.x, y: p.y - h.y};
+      });
+      hand.addEventListener('pointermove', e => {
+        if (!hand.hasPointerCapture(e.pointerId)) return;
+        const p = at(e), sh = pose(s.st).x - num(b.x, s.st, 0), yv = b.up ? P.H - (p.y - off.y) : p.y - off.y;
+        put(axes.includes('x') ? clamp(p.x - off.x - sh, rng.x) : null, axes.includes('y') ? clamp(yv, rng.y) : null);
+      });
+      const drop = () => { if (!off) return; off = null; hand.classList.remove('held'); hold(false); };
+      hand.addEventListener('pointerup', drop); hand.addEventListener('pointercancel', drop);
+      hand.addEventListener('keydown', e => {
+        const k = e.key.toLowerCase(), d = step * (e.shiftKey ? 10 : 1), one = axes.length === 1;
+        const dx = ['arrowright', 'd'].includes(k) ? d : ['arrowleft', 'a'].includes(k) ? -d : 0;
+        const up = ['arrowup', 'w'].includes(k) ? d : ['arrowdown', 's'].includes(k) ? -d : 0;
+        let mx = axes.includes('x') ? dx || (one ? up : 0) : 0, my = axes.includes('y') ? (b.up ? up : -up) || (one ? dx : 0) : 0;
+        if (!mx && !my) return;
+        e.preventDefault();
+        if (!timer) hold(true);
+        clearTimeout(timer); timer = setTimeout(() => { timer = 0; hold(false); }, 800);
+        put(mx ? clamp(+s.get(b.x) + mx, rng.x) : null, my ? clamp(+s.get(b.y) + my, rng.y) : null);
+      });
+    }
+    s.on(() => {
+      const p = pose(s.st);
+      posed.setAttribute('transform', tf(p)); posed.setAttribute('opacity', p.o); posed.style.setProperty('--tint', p.tint);
+      const h = gpose && P.held ? pose(P.held) : null;
+      const moved = h && (Math.abs(h.x - p.x) + Math.abs(h.y - p.y) + Math.abs(h.k - p.k) + Math.abs(h.r - p.r) + Math.abs(h.tint - p.tint)) > .05;
+      if (gpose) gpose.style.display = moved ? '' : 'none';
+      if (moved) { gpose.setAttribute('transform', tf(h)); gpose.style.setProperty('--tint', h.tint); }
+      if (hand) {
+        hand.setAttribute('transform', `translate(${p.x} ${p.y})`);
+        const v = +s.get(drag[0] === 'y' ? b.y : b.x), t = show(v, 1);
+        txt.setAttribute('y', -9); txt.textContent = b.label ? `${b.label} ${t}` : t;
+        hand.setAttribute('aria-valuenow', v); hand.setAttribute('aria-valuetext', `${b.label || b.art} ${t}`);
+        hand.style.display = ctx.live(b.lock) ? '' : 'none';
+      }
+    });
+    return node;
+  });
+})();
+
+/* blocks/layers/layers.js */
+/* layers: a flat picture of layer blocks, back to front, on a 160 x 90 stage. A layer with depth shifts by -pan * depth (parallax).
+   A control that starts a change sends rk-hold on the demo root; while it holds, each layer can show a faint ghost at the held values. */
+Rupaka.block('layers', (b, ctx) => {
+  const {el, sv} = Rupaka, s = ctx.s, W = 160, H = 90;
+  const svg = sv('svg', {viewBox: `0 0 ${W} ${H}`, role: 'group', 'aria-label': b.label || 'A picture in layers', class: 'stage'});
+  const stage = {svg, W, H, held: null, top: sv('g', {class: 'handles'}), pan: st => Rupaka.num(b.pan, st, 0)};
+  ctx.root.addEventListener('rk-hold', e => { stage.held = e.detail.on ? structuredClone(s.st) : null; s.emit('hold'); });
+  const c2 = Object.assign(Object.create(ctx), {stage});
+  svg.append(...(b.blocks || []).map(k => Rupaka.build(k, c2)), stage.top);
+  return el('div', {}, svg, b.note ? el('div', {class: 'rk-note', text: b.note}) : null);
+});
+
 /* blocks/pair/pair.js */
 /* pair: input cells, an arrow and the answer, as one row of a worked example: [18] → 47. The parts come in one by one. */
 Rupaka.block('pair', (b, ctx) => {
@@ -876,20 +1036,87 @@ Rupaka.block('pixels', (b, ctx) => {
 });
 
 /* blocks/plot/plot.js */
-/* plot: a line (or dots) through a derived series of {x, y}, on its axis. */
+/* plot: a line (or dots) through a derived series of {x, y}, on its axis. With `ghost`, the line from before the latest change stays faint.
+   With `guess` (a gate id) and `guesses` (one series key for each option of that gate, in the order of its options), the curve that the learner
+   predicted is drawn dashed beside the true one from the moment of Lock in. It is a copy made then, so it stays while the inputs move.
+   Two small tags, `your guess` and `true`, sit beside the two curves where they are farthest apart. Where the curves meet, one tag names both, in the right-most place where it touches no label, dot or line. */
 Rupaka.block('plot', (b, ctx) => {
   const {sv} = Rupaka, P = ctx.plane;
   if (!P) throw new Error('a plot must be inside an axis');
-  const path = sv('path', {class: 'ln', 'clip-path': P.clip}), dots = sv('g', {class: 'dots', 'clip-path': P.clip});
-  const g = sv('g', {role: 'img', 'aria-label': b.label || b.series}, path, dots);
+  const ghost = sv('path', {class: 'gh', 'clip-path': P.clip}), path = sv('path', {class: 'ln', 'clip-path': P.clip}), dots = sv('g', {class: 'dots', 'clip-path': P.clip});
+  const gs = sv('path', {class: 'gs', 'clip-path': P.clip}), guess = b.guess && b.guesses && !b.dots;
+  const tg = sv('text', {class: 'tg', 'text-anchor': 'middle', display: 'none'}), tt = sv('text', {class: 'tg', 'text-anchor': 'middle', display: 'none'});
+  const g = sv('g', {role: 'img', 'aria-label': b.label || b.series}, ...b.ghost && !b.dots ? [ghost] : [], ...guess ? [gs] : [], path, dots, ...guess ? [tg, tt] : []);
+  if (b.tone) g.classList.add(`t-${b.tone}`);
+  let cur = null, old = '', at = -1e9, kept = null;   // the line now, the line before this burst of changes, the time of the last change, the guess drawn
+  const line = xs => { let d = '', pen = false; for (const p of xs) { const ok = Number.isFinite(p.y) && Math.abs(P.Y(p.y)) < 1e5; if (ok) { d += `${pen ? 'L' : 'M'}${P.X(p.x).toFixed(2)} ${P.Y(p.y).toFixed(2)}`; pen = true; } else pen = false; } return d; };
+  // The tags keep a readable size: a narrow axis scales its drawing down, so the font grows to make up for it.
+  let fs = 13, last = [];   // last: the series as drawn now
+  const fit = () => { const w = P.svg.getBoundingClientRect().width; if (w) { fs = Math.max(13, 12 * P.W / w); [tg, tt].forEach(t => t.style.fontSize = `${fs.toFixed(1)}px`); if (kept) tag(last); } };
+  if (guess && typeof ResizeObserver !== 'undefined') new ResizeObserver(fit).observe(P.svg);
+  const spot = (text, x, y) => {   // the place for a tag, kept inside the plot box
+    const [x0, x1] = [P.X(P.x[0]), P.X(P.x[1])], [y0, y1] = [P.Y(P.y[1]), P.Y(P.y[0])], hw = text.length * fs * 0.3;
+    return [+Math.min(x1 - hw, Math.max(x0 + hw, x)).toFixed(1), +Math.min(y1 - 4, Math.max(y0 + fs, y)).toFixed(1)];
+  };
+  const put = (t, text, x, y) => {
+    const [cx, cy] = spot(text, x, y);
+    t.textContent = text; t.removeAttribute('display'); t.setAttribute('x', cx); t.setAttribute('y', cy);
+  };
+  // Where a tag touches no text, no dot and no line: the nearest such place to the curve (its right-most one), above it or below it. null if the browser cannot measure.
+  const clear = (t, text, xs) => {
+    try {
+      t.textContent = text; t.removeAttribute('display'); t.setAttribute('x', 0); t.setAttribute('y', 0);
+      const m = t.getBBox(), pad = 3, hw = m.width / 2 + pad, top = m.y - pad, bot = m.y + m.height + pad;
+      const boxes = [...P.svg.querySelectorAll('text:not(.tg), .rk-point circle')].map(e => e.getBBox()).filter(r => r.width);
+      const dots = [...P.svg.querySelectorAll('path.ln, path.gs')].filter(e => e.getAttribute('d')).flatMap(e => {
+        const n = Math.ceil(e.getTotalLength() / 3); return Array.from({length: n + 1}, (_, i) => e.getPointAtLength(e.getTotalLength() * i / n)); });
+      for (let k = 0; k < 14; k++) for (const lift of [-fs * (0.5 + k * 0.8), fs * (1.2 + k * 0.8)]) for (let i = xs.length - 1; i >= 0; i--) {
+        if (!Number.isFinite(xs[i].y)) continue;
+        const [cx, cy] = spot(text, P.X(xs[i].x), P.Y(xs[i].y) + lift), a = cx - hw, z = cx + hw, u = cy + top, v = cy + bot;
+        if (!boxes.some(r => a < r.x + r.width && r.x < z && u < r.y + r.height && r.y < v) && !dots.some(q => q.x > a && q.x < z && q.y > u && q.y < v)) return [cx, cy];
+      }
+    } catch (e) { /* no layout: the caller falls back */ }
+    return null;
+  };
+  const tag = xs => {
+    [tg, tt].forEach(t => t.setAttribute('display', 'none'));
+    if (!kept) return;
+    const gaps = xs.map((p, i) => { const q = kept[i]; return q && Number.isFinite(p.y) && Number.isFinite(q.y) ? Math.abs(P.Y(q.y) - P.Y(p.y)) : -1; });
+    const gap = Math.max(...gaps), best = gaps.findLastIndex(d => d >= gap * 0.6);   // the right-most place where they are far apart: it leaves the middle to the labels of points
+    if (gap < 0) return;
+    const p = xs[best], X = P.X(p.x), yt = P.Y(p.y), yg = P.Y(kept[best].y), side = (a, o) => a < o ? -fs * 0.5 : fs * 1.2;
+    if (gap < fs * 1.5) return put(tg, 'your guess, true', ...clear(tg, 'your guess, true', xs) || [X, yt - fs * 0.5]);
+    put(tg, 'your guess', X, yg + side(yg, yt)); put(tt, 'true', X, yt + side(yt, yg));
+  };
+  const pts = k => (ctx.s.get(k) || []).map(p => Array.isArray(p) ? {x: p[0], y: p[1]} : p);
+  // The curve of the option that the learner locked in, copied once; a gate opened again takes it away.
+  const guessed = () => {
+    if (!guess) return;
+    if (ctx.s.get(`gate.${b.guess}`) !== 'done') { kept = null; gs.removeAttribute('d'); return; }
+    if (kept) return;
+    const gt = ctx.gates?.find(x => x.id === b.guess), log = [...(ctx.s.get('log') || [])].reverse().find(e => e.gate === b.guess);
+    const k = gt && log && b.guesses[gt.options().indexOf(log.picked)];
+    if (!k) return;
+    kept = pts(k); gs.setAttribute('d', line(kept));
+    gs.setAttribute('aria-label', 'what you predicted');
+  };
   ctx.s.on(() => {
+    guessed();
     const xs = (ctx.s.get(b.series) || []).map(p => Array.isArray(p) ? {x: p[0], y: p[1]} : p);
     let d = '', pen = false;
     for (const p of xs) {
       const ok = Number.isFinite(p.y) && Math.abs(P.Y(p.y)) < 1e5;
       if (ok) { d += `${pen ? 'L' : 'M'}${P.X(p.x).toFixed(2)} ${P.Y(p.y).toFixed(2)}`; pen = true; } else pen = false;
     }
+    if (b.ghost && cur !== null && d !== cur) {
+      const now = performance.now();
+      if (now - at > 500) { old = cur; ghost.setAttribute('d', old); }
+      at = now;
+    }
+    cur = d;
     path.setAttribute('d', b.dots ? '' : d);
+    last = xs;
+    if (guess) queueMicrotask(() => tag(xs));   // after the dots and labels beside it have moved
     dots.replaceChildren(...(b.dots ? xs.filter(p => Number.isFinite(p.y)).map(p => sv('circle', {cx: P.X(p.x), cy: P.Y(p.y), r: 3.5})) : []));
   });
   return g;
@@ -897,17 +1124,18 @@ Rupaka.block('plot', (b, ctx) => {
 
 /* blocks/point/point.js */
 /* point: a dot on its axis. It drags when its key is a state input; a point on a derived value only shows it.
-   Arrows or WASD move one step; ⇧ moves ten. On a number line ↑/↓ move it too. */
+   Arrows or WASD move one step; ⇧ moves ten. On a number line ↑/↓ move it too.
+   With `along`, the dot sits on a curve (its y is derived): a drag or A/D or ←/→ changes only the state key of x, and y follows. */
 Rupaka.block('point', (b, ctx) => {
   const {sv, show} = Rupaka, s = ctx.s, P = ctx.plane;
   if (!P) throw new Error('a point must be inside an axis');
   const kx = b.bind || b.x, ky = b.y, st = ctx.spec.state || {}, step = b.step ?? 1;
-  const drag = b.drag ?? (Object.hasOwn(st, kx) && (!ky || Object.hasOwn(st, ky)));
+  const along = !!b.along && !!ky, drag = b.drag ?? (Object.hasOwn(st, kx) && (along || !ky || Object.hasOwn(st, ky)));
   const dot = sv('circle', {class: 'dot', r: 7}), ring = sv('circle', {class: 'halo', r: 14}), txt = sv('text', {class: 'pl', 'text-anchor': 'middle'});
   const g = sv('g', drag ? {tabindex: 0, role: 'slider', 'aria-label': b.label || kx} : {role: 'img'}, ring, dot, txt);
   if (drag) g.classList.add('drag');
   const snap = (v, [lo, hi]) => +Math.min(hi, Math.max(lo, Math.round(v / step) * step)).toFixed(6);
-  const put = (x, y) => { if (x !== s.get(kx)) ctx.put(b, kx, x); if (ky && y !== s.get(ky)) ctx.put(b, ky, y); };
+  const put = (x, y) => { if (x !== s.get(kx)) ctx.put(b, kx, x); if (ky && !along && y !== s.get(ky)) ctx.put(b, ky, y); };
   const at = e => { const pt = P.svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY; return pt.matrixTransform(P.svg.getScreenCTM().inverse()); };
   if (drag) {
     g.addEventListener('pointerdown', e => { if (!ctx.live(b.lock)) return; e.stopPropagation(); g.setPointerCapture(e.pointerId); g.classList.add('held'); });
@@ -916,7 +1144,7 @@ Rupaka.block('point', (b, ctx) => {
     g.addEventListener('keydown', e => {
       const k = e.key.toLowerCase(), d = step * (e.shiftKey ? 10 : 1);
       const dx = ['arrowright', 'd'].includes(k) ? d : ['arrowleft', 'a'].includes(k) ? -d : 0;
-      const dy = ['arrowup', 'w'].includes(k) ? d : ['arrowdown', 's'].includes(k) ? -d : 0;
+      const dy = along ? 0 : ['arrowup', 'w'].includes(k) ? d : ['arrowdown', 's'].includes(k) ? -d : 0;
       if (!dx && !dy) return;
       e.preventDefault();
       if (ky) put(snap(+s.get(kx) + dx, P.x), snap(+s.get(ky) + dy, P.y));
@@ -1514,6 +1742,64 @@ Rupaka.block('slider', (b, ctx) => {
 /* blocks/stack/stack.js */
 /* stack: child blocks one above the other, as one group (one `after` can hide them all). */
 Rupaka.block('stack', (b, ctx) => Rupaka.el('div', {}, (b.blocks || []).map(ctx.build)));
+
+/* blocks/timeline/timeline.js */
+/* timeline: the time t of a scene. Drag the bar, press Play (rAF), or jump to a marker. A/D step (⇧ ten), Q/E the marker before and after, W play and pause.
+   A drag or a key sends rk-hold, so layers can show a ghost at the earlier time. */
+Rupaka.block('timeline', (b, ctx) => {
+  const {el, show} = Rupaka, s = ctx.s, lo = b.min ?? 0, hi = b.max ?? 100, step = b.step ?? 1, speed = b.speed ?? (hi - lo) / 10;
+  const marks = [...(b.markers || [])].sort((a, c) => a.t - c.t), name = b.label || 'Time';
+  const inp = el('input', {type: 'range', min: lo, max: hi, step, 'aria-label': name}), out = el('output');
+  const btn = el('button', {type: 'button', class: 'rk-tl-play', text: 'Play', 'aria-pressed': 'false'});
+  const chips = marks.map(m => {
+    const c = el('button', {type: 'button', class: 'rk-tl-mark', text: m.label, 'aria-label': `${name} ${m.label}`});
+    c.style.setProperty('--p', (m.t - lo) / (hi - lo));
+    c.addEventListener('click', () => nudge(() => go(m.t)));
+    return c;
+  });
+  const wrap = el('div', {}, el('span', {class: 'rk-lbl'}, name, out), el('div', {class: 'rk-tl'}, btn, el('div', {class: 'rk-tl-bar'}, inp, el('div', {class: 'rk-tl-marks'}, chips))));
+  const hold = on => ctx.root.dispatchEvent(new CustomEvent('rk-hold', {detail: {on}}));
+  let timer = 0, playing = false, raf = 0, last = null;
+  const nudge = f => { if (!timer) hold(true); clearTimeout(timer); timer = setTimeout(() => { timer = 0; hold(false); }, 800); f(); };
+  const put = v => ctx.put(b, b.bind, +Math.min(hi, Math.max(lo, v)).toFixed(6));
+  const go = v => { stop(); put(Math.round(v / step) * step); };
+  const tick = now => {
+    if (!playing) return;
+    if (!wrap.isConnected) { playing = false; return; }
+    const dt = last == null ? 0 : Math.min(.1, (now - last) / 1000); last = now;
+    const v = +s.get(b.bind) + speed * dt;
+    if (v >= hi && !b.loop) { put(hi); stop(); return; }
+    put(v >= hi ? lo : v);
+    raf = requestAnimationFrame(tick);
+  };
+  const stop = () => { playing = false; cancelAnimationFrame(raf); last = null; btn.textContent = 'Play'; btn.setAttribute('aria-pressed', 'false'); };
+  const play = () => {
+    if (!ctx.live(b.lock)) return;
+    if (+s.get(b.bind) >= hi) put(lo);
+    playing = true; btn.textContent = 'Pause'; btn.setAttribute('aria-pressed', 'true'); raf = requestAnimationFrame(tick);
+  };
+  btn.addEventListener('click', () => playing ? stop() : play());
+  inp.addEventListener('pointerdown', () => { stop(); hold(true); });
+  ['pointerup', 'pointercancel'].forEach(ev => inp.addEventListener(ev, () => hold(false)));
+  inp.addEventListener('input', () => { if (!put(+inp.value)) inp.value = s.get(b.bind); });
+  wrap.addEventListener('keydown', e => {
+    const k = e.key.toLowerCase(), t = +s.get(b.bind);
+    if (k === 'w') { e.preventDefault(); playing ? stop() : play(); }
+    else if (k === 'a' || k === 'd') { e.preventDefault(); nudge(() => go(t + (k === 'd' ? 1 : -1) * step * (e.shiftKey ? 10 : 1))); }
+    else if (k === 'q' || k === 'e') {
+      e.preventDefault();
+      const to = k === 'q' ? marks.filter(m => m.t < t - 1e-6).pop()?.t ?? lo : marks.find(m => m.t > t + 1e-6)?.t ?? hi;
+      nudge(() => go(to));
+    }
+  });
+  s.on(() => {
+    const t = +s.get(b.bind), cur = marks.filter(m => m.t <= t + 1e-6).length - 1;
+    inp.value = t; out.textContent = show(t, 1); inp.disabled = !ctx.live(b.lock);
+    inp.setAttribute('aria-valuetext', `${name} ${show(t, 1)}${cur >= 0 ? `, ${marks[cur].label}` : ''}`);
+    chips.forEach((c, i) => { c.classList.toggle('on', i === cur); i === cur ? c.setAttribute('aria-current', 'true') : c.removeAttribute('aria-current'); });
+  });
+  return wrap;
+});
 
 /* blocks/toggle/toggle.js */
 /* toggle: on or off. Space or ↩ (native button keys) flip it. */

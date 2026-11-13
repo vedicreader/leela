@@ -1076,7 +1076,7 @@
 :root[data-theme="solarized"][data-mode="dark"] .hl-constant-macro { color: #db302d; }
 :root[data-theme="solarized"][data-mode="dark"] .hl-constructor { color: #c94c16; }
 :root[data-theme="solarized"][data-mode="dark"] .hl-constructor-tsx { color: #268bd3; }
-:root[data-theme="solarized"][data-mode="dark"] .hl-diff-delta { background-color: #191d00; }
+:root[data-theme="solarized"][data-mode="dark"] .hl-diff-delta { background-color: #3c1403; }
 :root[data-theme="solarized"][data-mode="dark"] .hl-diff-minus { background-color: #380605; }
 :root[data-theme="solarized"][data-mode="dark"] .hl-diff-plus { background-color: #103a3c; }
 :root[data-theme="solarized"][data-mode="dark"] .hl-function { color: #268bd3; }
@@ -1190,7 +1190,7 @@
 :root[data-theme="solarized"][data-mode="light"] .hl-constant-macro { color: #db302d; }
 :root[data-theme="solarized"][data-mode="light"] .hl-constructor { color: #c94c16; }
 :root[data-theme="solarized"][data-mode="light"] .hl-constructor-tsx { color: #268bd3; }
-:root[data-theme="solarized"][data-mode="light"] .hl-diff-delta { background-color: #ebffd7; }
+:root[data-theme="solarized"][data-mode="light"] .hl-diff-delta { background-color: #feccb7; }
 :root[data-theme="solarized"][data-mode="light"] .hl-diff-minus { background-color: #ffd2d1; }
 :root[data-theme="solarized"][data-mode="light"] .hl-diff-plus { background-color: #b7fefa; }
 :root[data-theme="solarized"][data-mode="light"] .hl-function { color: #268bd3; }

@@ -56,7 +56,7 @@ VERSE_SCRIPT = {'sanskrit': 'Devanagari', 'tamil': 'Tamil'}
 class _Read:
     "A vault whose read already ran, for `lekhaka.read_book`: Leela reads with progress, cancel and the privacy gate, and lekhaka assembles."
     def __init__(self, v, did): self.v, self.did = v, did
-    def read_doc(self, *a, **kw): return dict(doc_id=self.did)
+    def read_doc(self, *a, **kw): return dict(doc_id=self.did, cost=0, failed=[], unread=[], blocked=[])
     def pages(self, did): return self.v.pages(did)
 
 def _prob_page(s):

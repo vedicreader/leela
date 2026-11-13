@@ -127,18 +127,22 @@ _MD_OPTS = dict(math='dollars', implicit_figures=True)
 _HTML_TAGS = set('a abbr b blockquote br caption cite code col colgroup dd del details div dl dt em figcaption figure h1 h2 h3 h4 h5 h6 hr i img input ins kbd li mark ol p pre q s samp section small span strong sub summary sup table tbody td tfoot th thead tr u ul var'.split())
 _HTML_DROP = set('script style iframe frame object embed video audio form button meta base link noscript template svg math select textarea'.split())
 _HTML_ATTRS = {'*': set('class id title lang dir role data-id'.split()), 'a': {'href'}, 'img': set('src alt title width height'.split()),
-               'td': set('colspan rowspan scope align'.split()), 'th': set('colspan rowspan scope align'.split()), 'col': {'span'},
+               'td': set('colspan rowspan scope align'.split()), 'th': set('colspan rowspan scope align'.split()), 'table': {'style'}, 'col': {'span', 'style'},
                'ol': {'start', 'type'}, 'li': {'value'}, 'details': {'open'}, 'input': {'checked', 'disabled'}}
 _CLASS_PREFIX, _CLASS_NAMES = ('language-', 'hl-', 'footnote-'), {'footnotes', 'task-list', 'xref', 'math', 'inline', 'display'}
 _ROLES = {'doc-noteref', 'doc-backlink', 'doc-endnotes'}
 _ID_OK = re.compile(r'^[A-Za-z][\w:.-]{0,80}$')
 _IMG_DATA = re.compile(r'^data:image/(png|jpeg|gif|webp|avif);base64,')
+_LEN = r'(?:0|auto|\d+(?:\.\d+)?(?:px|%|em|rem|ch|ex|in|cm|mm|pt|pc|vw|vh))'
+#: mdhtml's table and column widths: a length, or the `calc` it writes for an `fr` column
+_WIDTH = re.compile(rf'width:(?:{_LEN}|calc\(\(100%(?: - {_LEN})+\) \* \d+(?:\.\d+)?\))', re.ASCII)
 
 def _html_attr(tag, attr, val):
     "nh3's per-attribute verdict: the value to keep, or None. Class, id and role are policy, so raw HTML cannot borrow the UI's."
     if attr == 'class': return ' '.join(t for t in val.split() if t.startswith(_CLASS_PREFIX) or t in _CLASS_NAMES) or None
     if attr == 'id': return val if _ID_OK.match(val) else None
     if attr == 'role': return val if val in _ROLES else None
+    if attr == 'style': return val if all(_WIDTH.fullmatch(d) or (tag == 'table' and d == 'table-layout:fixed') for d in val.split(';')) else None
     if attr in ('href', 'src'):
         u = re.sub(r'[\x00-\x20]+', '', val).lower()
         if u.startswith('data:'): return val if tag == 'img' and attr == 'src' and _IMG_DATA.match(val) else None
@@ -147,7 +151,7 @@ def _html_attr(tag, attr, val):
     return val
 
 def clean_html(html, relative=True):
-    "`html` reduced to what Markdown can mean: no script, frames, media, forms, handlers or styles, and only safe link schemes. `relative=False` drops relative URLs and attachments, so stored text makes no request to Leela."
+    "`html` reduced to what Markdown can mean: no script, frames, media, forms, handlers or styles beyond mdhtml's table and column widths, and only safe link schemes. `relative=False` drops relative URLs and attachments, so stored text makes no request to Leela."
     return nh3.clean(html, tags=_HTML_TAGS, clean_content_tags=_HTML_DROP, attributes=_HTML_ATTRS, attribute_filter=_html_attr, strip_comments=False,
                      url_schemes={'http', 'https', 'mailto', 'data'} | ({'attachment'} if relative else set()), link_rel='noopener noreferrer', url_relative='pass_through' if relative else 'deny',
                      tag_attribute_values={'input': {'type': {'checkbox'}}}, set_tag_attribute_values={'input': {'disabled': 'disabled'}})
