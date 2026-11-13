@@ -2,6 +2,15 @@
 
 <!-- do not remove -->
 
+## 1.2.3
+
+Book views and table widths, on ramabana 0.2.116.
+
+- Book views open again. With lekhaka 0.0.7, every book view raised `KeyError: 'cost'`.
+- Tables in rendered Markdown keep their table and column widths from mdhtml 0.1.45. Every other style on a table is still removed.
+- The bundled rupaka is 0.0.18, and the syntax highlighting styles follow fastpylight 0.1.19.
+- Needs ramabana 0.2.116, abhyasa 0.0.28 and dhrona 0.1.26 or newer.
+
 ## 1.2.2
 
 Models after the rishi 0.1.70 split.
