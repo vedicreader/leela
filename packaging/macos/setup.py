@@ -107,7 +107,8 @@ HEAVY = ('mlx', 'mlx_lm', 'mlx_vlm', 'mlx_audio', 'llama_cpp', 'cv2', 'transform
 #: browser fetching failed in the packaged app and nowhere else. `liteparse` opens `libpdfium.dylib`
 #: from beside its extension module, which py2app split from it: PDF parsing failed in the app alone,
 #: and notarisation refused the unsigned copy left in the zip.
-GRAFTED = ('apsw', 'playwright', 'patchright', 'liteparse')
+# LiteRT's Mach-O header has no space for py2app's longer install name.
+GRAFTED = ('apsw', 'playwright', 'patchright', 'liteparse', 'litert_lm')
 
 #: Paths nothing may reach, in `python313.zip` or beside it. py2app put `claude_agent_sdk` beside it, so
 #: 0.1.21 carried the SDK's 206MB `claude`, which the SDK prefers when `cli_path` is unset. `rishi.claude`
@@ -131,7 +132,7 @@ APP = App(
     # what `leela[local]` installs beside the bundle instead. A lean build has none of it to find;
     # these keep a build made in a full development environment lean too, which is the one a
     # person is most likely to run by hand.
-    excludes   = ['webview.platforms.qt', *HEAVY],
+    excludes   = ['webview.platforms.qt', 'litert_lm', *HEAVY],
     grafted    = GRAFTED,
     unreachable= UNREACHABLE,
     data       = DATA_FILES,

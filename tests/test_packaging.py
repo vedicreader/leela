@@ -61,6 +61,11 @@ def test_every_frozen_package_is_the_import_name_and_not_the_distribution_name(w
         if name == 'pip': continue
         assert importlib.util.find_spec(name) is not None, f'{name!r} is not an importable package'
 
+def test_litert_is_grafted_without_macho_relocation(mac):
+    assert 'litert_lm' in mac.GRAFTED
+    assert 'litert_lm' in mac.EXCLUDES
+
+
 def test_the_mac_build_hands_py2app_no_install_requires(mac):
     """py2app 0.28.10 raises `install_requires is no longer supported`, and the build runs from the repository root, so setuptools fills that field in from `pyproject.toml` and every build died before py2app copied a file."""
     import os
@@ -270,7 +275,8 @@ def test_the_bundle_can_import_what_its_features_need():
     if not app.is_dir(): pytest.skip('dist/Leela.app is not built')
     python = app/'Contents'/'MacOS'/'python'
     if not python.exists(): pytest.skip('the bundle ships no interpreter helper')
-    src = 'import ' + ', '.join(BUNDLED_IMPORTS)
+    src = ('import ' + ', '.join(BUNDLED_IMPORTS) +
+           '; from litert_lm._ffi import _get_lib; assert _get_lib() is not None')
     # `XDG_DATA_HOME` too: without it pyskills looks for its dir under the real home, misses this one and writes `pyskills.pth`.
     env = {'PYTHONHOME': str(app/'Contents'/'Resources'), 'PYTHONPATH': ':'.join(_stdlib(app) + [str(_pyskills())]),
            'XDG_DATA_HOME': str(_pyskills().parent)}
