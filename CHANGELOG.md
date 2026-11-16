@@ -2,6 +2,14 @@
 
 <!-- do not remove -->
 
+## 1.2.4
+
+Better 3D and 2D demos, on rupaka 0.0.20 and abhyasa 0.0.29.
+
+- The bundled rupaka is 0.0.20. A demo can draw a scene with space, circuits, networks and maps, and a 2D `arrow` on an `axis` for a vector or a force.
+- Show me in the screen guide gives a 3D explainer only for an idea that needs depth. An idea in one plane, such as a lever, gets a 2D demo.
+- Needs abhyasa 0.0.29 and rupaka 0.0.20 or newer.
+
 ## 1.2.3
 
 Book views and table widths, on ramabana 0.2.116.
