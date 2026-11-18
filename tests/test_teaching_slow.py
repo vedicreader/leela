@@ -34,9 +34,20 @@ def test_prediction_retry_then_unaided_transfer(tmp_path, monkeypatch):
         transfer = host.locator('.lee-rupaka-transfer')
         await transfer.locator('.opts button').first.wait_for()
         assert await host.locator('.rk-plot').first.is_hidden()
+        await transfer.get_by_text('To reach transfer:', exact=False).wait_for()
         await transfer.locator('.opts button', has_text='70').dispatch_event('click')
         async with pg.expect_response('**/lesson/transfer') as saved: await transfer.locator('button.go').click()
         result = await (await saved.value).json()
         assert result['ok'] and result['aided'] is False
+        await transfer.get_by_text('Counted as apply. One more new case, on your own, to reach transfer.', exact=True).wait_for()
         assert Notebook.load(path)[1].extra['rupaka']['throw-angle']['transfer']['filed']
+        await transfer.get_by_role('button', name='Try a new case', exact=True).click()
+        await transfer.get_by_text('At the same speed, which other angle lands as far as 15 degrees?', exact=True).wait_for()
+        assert await transfer.locator('.rk-plot').count() == 0
+        await transfer.locator('.opts button', has_text='75').dispatch_event('click')
+        async with pg.expect_response('**/lesson/transfer') as saved: await transfer.locator('button.go').click()
+        result = await (await saved.value).json()
+        assert result['message'] == 'Transfer reached.' and result['progress']['depth'] == 5
+        await transfer.get_by_text('Transfer reached.', exact=True).wait_for()
+        assert await transfer.get_by_role('button', name='Try a new case', exact=True).count() == 0
     asyncio.run(_page(go, tmp_path))

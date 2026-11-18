@@ -4126,6 +4126,10 @@ async function lessonTransferAnswer(e, t, host, settle, held) {
     if (d?.ok !== true) throw Object.assign(new Error(d?.error || d?.message || 'The answer was refused.'), {body: d});
     if (lee.tabKey !== t.tab || lee.path !== t.path || host.leeSource !== t.source) return settle(false, LESSON_LATE);
     settle(true); t.done = true; t.note.textContent = d.message || '';
+    if (d.next_case) {
+      const next = document.createElement('button'); next.type = 'button'; next.textContent = 'Try a new case';
+      next.onclick = t.openNext; t.box.append(next);
+    }
     status(d.message || '', 'ok');
   } catch (err) {
     const said = lessonSaid(err);
@@ -4151,9 +4155,11 @@ function lessonTransferOffer(inner, spec, entry, current) {
       if (t && (t.done || t.host !== host || t.src !== src || t.tab !== tab)) { lessonTransferHide(t); t.box.remove(); lessonActive.delete(key); t = null; }
       if (!t) {
         const d = await post('/lesson/transfer', {path, cell_id: c.id, demo: spec.id, src});
-        if (d?.ok !== true || !d.transfer_id || !d.spec) throw Object.assign(new Error(d?.error || 'No new case.'), {body: d});
+        if (d?.ok !== true) throw Object.assign(new Error(d?.error || 'No new case.'), {body: d});
         if (lee.tabKey !== tab || lee.path !== path || host.leeSource !== source || !current()) return;
-        t = lessonTransferMount(host, {id: d.transfer_id, key, path, tab, cell: c.id, demo: spec.id, src, source}, d.spec);
+        t = lessonTransferMount(host, {id: d.transfer_id, key, path, tab, cell: c.id, demo: spec.id, src, source, openNext: () => button.onclick()},
+          d.spec || {rupaka: 1, state: {}, blocks: [{type: 'caption', text: d.progress.message}]});
+        if (!d.spec) t.done = true;
       }
       lessonTransferShow(t);
     } catch (err) { status(err.body?.error || 'Leela could not open a new case. Try again.', 'err'); }

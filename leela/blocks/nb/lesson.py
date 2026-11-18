@@ -487,10 +487,26 @@ def prediction_explanation(memory, nb, cell, gate, demo):
         a = p and first(a for a in rows if a.get('of') == p.id and a.kind == 'explanation')
         return dict(id=a.id, status=a.grade_status) if a else None
 
-def transfer_spec():
+def transfer_state(memory, nb):
+    "Return transfer progress from the lesson concept's stored evidence."
+    from abhyasa.learner import Learning
+    from abhyasa.show import transfer_progress
+    from ..memory.memory import _open_lock
+    vault = memory._store('learning')
+    with _open_lock(memory.path):
+        records = Learning(vault).attempts(_slug(nb.meta['lesson']['name'], walk_meta(nb)), limit=None)
+        progress = transfer_progress(records)
+        # Ask an uncounted pilot case. Abhyasa alone decides what counts.
+        angles = [a for a in (20, 15) if transfer_progress([r for r in records if r.get('case_id') == f'throw-angle:complement:{a}']).depth == 0]
+        return dict(progress, next_angle=angles[0] if progress.depth < 5 and angles else None)
+
+def transfer_spec(angle=20):
+    from abhyasa.show import transfer_progress
+    complement = 90 - angle  # Equal range on level ground: sin(2a) = sin(2(90-a)).
     return dict(rupaka=1, id='throw-angle-transfer', title='Try a new case without the trajectory', askable=False, state={}, blocks=[
-        dict(type='caption', text='Level ground, no air resistance, the same launch speed.'),
-        dict(type='gate', id='transfer', prompt='At the same speed, which other angle lands as far as 20 degrees?', options=[40, 70, 80], answer={'is': 70})])
+        dict(type='caption', text='Level ground, no air resistance, the same launch speed. ' + transfer_progress([]).rule),
+        dict(type='gate', id='transfer', prompt=f'At the same speed, which other angle lands as far as {angle} degrees?',
+             options=[40, complement, 80] if angle == 20 else [30, complement, 60], answer={'is': complement})])
 
 def record_transfer(memory, nb, cell, path, demo, transfer, picked):
     from abhyasa.learner import Learning
@@ -503,10 +519,19 @@ def record_transfer(memory, nb, cell, path, demo, transfer, picked):
             slug = _slug(nb.meta['lesson']['name'], walk_meta(nb))
             prior = first(a for a in lr.attempts(slug, limit=10000) if a.kind == 'transfer' and a.get('evidence_id') == transfer['id'])
             if prior and prior.answer != js_str(picked): raise ValueError('This transfer answer was already filed. The first answer is kept.')
-            a = lr.record_transfer(slug, transfer_spec()['blocks'][1]['prompt'], js_str(picked), '70', js_str(picked) == '70',
-                aided=bool(transfer.get('assistance')), evidence_id=transfer['id'], notebook=str(path), source_hash=transfer['src'],
+            angle = transfer.get('angle', 20)
+            gate = transfer_spec(angle)['blocks'][1]
+            expected = js_str(gate['answer']['is'])
+            a = lr.record_transfer(slug, gate['prompt'], js_str(picked), expected, js_str(picked) == expected,
+                aided=bool(transfer.get('assistance')), evidence_id=transfer['id'], case_id=f'throw-angle:complement:{angle}', multiple_choice=True, notebook=str(path), source_hash=transfer['src'],
                 inputs=transfer['inputs'], assistance=transfer.get('assistance', []), origin_demo=demo, **_rest(walk_meta(nb)))
-            return dict(ok=True, aided=a.aided, correct=bool(a.correct), message='Saved as aided.' if a.aided else 'Saved as unaided.')
+            from abhyasa.show import transfer_progress
+            records = lr.attempts(slug, limit=None)
+            progress = transfer_progress(records)
+            # Describe this filed answer, including a retry of an older answer.
+            message = transfer_progress([*[r for r in records if r.id != a.id], dict(a, at=float('inf'))]).message
+            return dict(ok=True, aided=a.aided, correct=bool(a.correct), message=message, progress=progress,
+                        next_case=progress.depth == 4)
 
 def workspace_help(ws, nb=None, kind='tutor', pending_only=False):
     docs = getattr(ws, 'docstore', None)

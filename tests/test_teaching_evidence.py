@@ -84,17 +84,24 @@ def test_transfer_requires_kept_run_and_files_separate_unaided_item(serve):
     assert response.status_code == 200, response.text
     question = response.json()
     assert question['spec']['id'] != 'throw-angle' and 'plot' not in json.dumps(question['spec'])
+    assert question['progress']['rule'] == 'To reach transfer: answer two new cases on your own, or one new case in your own words or numbers.'
+    assert question['progress']['rule'] in json.dumps(question['spec'])
     submit = dict(body, transfer_id=question['transfer_id'], picked=70)
     saved = r.c.post('/lesson/transfer', json=submit)
     assert saved.status_code == 200, saved.text
-    assert r.c.post('/lesson/transfer', json=submit).status_code == 200
+    assert saved.json()['message'] == 'Counted as apply. One more new case, on your own, to reach transfer.'
+    assert saved.json()['progress']['depth'] == 4
+    assert r.c.post('/lesson/transfer', json=submit).json()['message'] == saved.json()['message']
     records = rows(r)
     prediction = next(a for a in records if a.kind == 'demo')
     transfer = next(a for a in records if a.kind == 'transfer')
     assert transfer.id != prediction.id and not transfer.aided and transfer.correct
     assert transfer.source_hash == body['src'] and transfer.inputs == {'a': 30, 't': .5}
     assert len([a for a in records if a.kind == 'transfer']) == 1
-    assert shelf(r).concept('halves').floor == 5
+    assert shelf(r).concept('halves').floor == 4
+    reopened = r.c.post('/lesson/transfer', json=body).json()
+    assert reopened['progress']['depth'] == 4
+    assert reopened['progress']['needed'] == 'One more new case, on your own, to reach transfer.'
 
 
 @pytest.mark.parametrize('help_kind', ['hint', 'tutor', 'demo', 'reveal'])
@@ -111,6 +118,7 @@ def test_help_since_transfer_appeared_prevents_deeper_credit(serve, help_kind):
     assert r.c.post('/lesson/transfer', json=dict(body, transfer_id=question['transfer_id'], picked=70, assistance=[])).status_code == 200
     transfer = next(a for a in rows(r) if a.kind == 'transfer')
     assert transfer.aided and shelf(r).concept('halves').floor <= 2
+    assert r.c.post('/lesson/transfer', json=dict(body, transfer_id=question['transfer_id'], picked=70)).json()['message'] == 'Saved. It does not count toward transfer.'
 
 
 def test_transfer_identity_survives_workspace_restart(serve):
@@ -153,6 +161,17 @@ def transfer_rig(serve):
     r.c.post('/nb/edit', json=dict(op='rupaka_trial', path=str(r.p), id=r.nb[1].id, i=1, demo='throw-angle', src=body['src'], rev=0, inputs={'a': 30, 't': .5}))
     question = r.c.post('/lesson/transfer', json=body).json()
     return r, body, question
+
+
+def test_wrong_transfer_stays_on_record_without_credit(transfer_rig):
+    r, body, question = transfer_rig
+    before = shelf(r).concept('halves').floor
+    saved = r.c.post('/lesson/transfer', json=dict(body, transfer_id=question['transfer_id'], picked=80))
+    assert saved.status_code == 200
+    assert saved.json()['message'] == 'Saved. It does not count toward transfer.'
+    assert saved.json()['progress']['depth'] == 0
+    assert shelf(r).concept('halves').floor == before
+    assert not next(a for a in rows(r) if a.kind == 'transfer').correct
 
 
 def test_reopening_demo_after_transfer_appeared_marks_reveal(transfer_rig):
@@ -285,3 +304,42 @@ def test_landed_prediction_retry_cannot_reveal_a_changed_pick(rig):
     response = post(rig, picked=4, evidence_id='landed-before-timeout', inputs={})
     assert response.status_code == 409, response.text
     assert next(a for a in rows(rig) if a.kind == 'demo').answer == '2'
+
+
+def test_second_transfer_case_reaches_and_stops(transfer_rig):
+    from leela.blocks.nb.nb import Notebook
+    r, body, first = transfer_rig
+    saved = r.c.post('/lesson/transfer', json=dict(body, transfer_id=first['transfer_id'], picked=70)).json()
+    assert saved['progress']['depth'] == 4
+    restored = Notebook.load(r.p)
+    r.nb.cells = restored.cells
+    second = r.c.post('/lesson/transfer', json=body).json()
+    assert '15 degrees?' in second['spec']['blocks'][1]['prompt']
+    assert second['case_id'] == 'throw-angle:complement:15'
+    assert second['transfer_id'] != first['transfer_id']
+    restored = Notebook.load(r.p)
+    r.nb.cells = restored.cells
+    reopened = r.c.post('/lesson/transfer', json=body).json()
+    assert reopened['case_id'] == second['case_id']
+    assert reopened['transfer_id'] == second['transfer_id']
+    reached = r.c.post('/lesson/transfer', json=dict(body, transfer_id=second['transfer_id'], picked=75)).json()
+    assert reached['message'] == 'Transfer reached.'
+    assert reached['progress']['depth'] == 5
+    transfers = sorted((a for a in rows(r) if a.kind == 'transfer'), key=lambda a: a.at)
+    assert [(a.case_id, a.depth) for a in transfers] == [('throw-angle:complement:20', 4), ('throw-angle:complement:15', 5)]
+    assert shelf(r).concept('halves').floor == 5
+    done = r.c.post('/lesson/transfer', json=body).json()
+    assert done['spec'] is None and done['transfer_id'] is None
+    assert done['progress']['message'] == 'Transfer reached.'
+
+
+@pytest.mark.parametrize('aided', [False, True])
+def test_uncounted_first_case_does_not_unlock_second(transfer_rig, aided):
+    r, body, first = transfer_rig
+    if aided:
+        assert r.c.post('/lesson/assist', json=dict(body, kind='hint')).status_code == 200
+    saved = r.c.post('/lesson/transfer', json=dict(body, transfer_id=first['transfer_id'], picked=70 if aided else 80)).json()
+    assert saved['progress']['depth'] == 0
+    retry = r.c.post('/lesson/transfer', json=body).json()
+    assert '20 degrees?' in retry['spec']['blocks'][1]['prompt']
+    assert retry['case_id'] == 'throw-angle:complement:20'

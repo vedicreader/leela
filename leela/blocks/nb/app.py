@@ -19,7 +19,7 @@ from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, OutFeed, RunningCellError, capped, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
-from .lesson import mark_assistance, prediction_explanation, grade_explanation, transfer_spec, record_transfer, demo_gate, rupaka_picks, rupaka_edit, rupaka_keys, GUIDE_NEEDS, GUIDE_STREAM_NEEDS, EnvGone, check_anchors, check_demo, filed_picks, guide_board, lock, prediction_filing, record_card, record_prediction
+from .lesson import mark_assistance, prediction_explanation, grade_explanation, transfer_spec, transfer_state, record_transfer, demo_gate, rupaka_picks, rupaka_edit, rupaka_keys, GUIDE_NEEDS, GUIDE_STREAM_NEEDS, EnvGone, check_anchors, check_demo, filed_picks, guide_board, lock, prediction_filing, record_card, record_prediction
 from .exercise import JUDGE, Refused, check_cell, exercise_meta, public_verdict
 from . import presentation
 
@@ -632,16 +632,22 @@ def connect(app, ctx):
             picks = await off_loop(filed_picks, ctx.memory, nb, cell)
             if 'throw-angle:g' not in picks: return fail('Lock in and keep a run before trying a new case.')
             transfer = record.get('transfer')
+            if 'picked' not in d:
+                progress = await off_loop(transfer_state, ctx.memory, nb)
+                angle = progress['next_angle']
+                if angle is None: return dict(ok=True, transfer_id=None, spec=None, progress=progress)
+                if transfer and transfer.get('angle', 20) != angle: transfer = None
+            else: angle = (transfer or {}).get('angle', 20)
             if not transfer or transfer.get('src') != d['src']:
-                transfer = record['transfer'] = dict(id=uuid.uuid4().hex, boot=lesson_boot, src=d['src'], inputs=dict(record['inputs']), assistance=[])
+                transfer = record['transfer'] = dict(id=uuid.uuid4().hex, boot=lesson_boot, src=d['src'], angle=angle, inputs=dict(record['inputs']), assistance=[])
                 nb.dirty = tab.dirty = True
             if transfer.get('boot') != lesson_boot: mark_assistance(nb, 'reveal', cell)
             if 'picked' not in d:
                 saved = await nb_save(req)
                 if not isinstance(saved, dict) or not saved.get('ok'): return saved
-                return dict(ok=True, transfer_id=transfer['id'], spec=transfer_spec())
+                return dict(ok=True, transfer_id=transfer['id'], case_id=f'throw-angle:complement:{angle}', spec=transfer_spec(angle), progress=progress)
             if d.get('transfer_id') != transfer['id']: return fail('This question changed. Open it again.', 409)
-            if str(d['picked']) not in ('40', '70', '80'): return fail('Choose one of the offered angles.')
+            if str(d['picked']) not in [str(x) for x in transfer_spec(angle)['blocks'][1]['options']]: return fail('Choose one of the offered angles.')
             if isinstance(helped := d.get('assistance'), list):
                 transfer['assistance'] = sorted(set([*transfer.get('assistance', []), *[k for k in helped if k in ('hint', 'tutor', 'demo', 'reveal')]]))
             try: result = await off_loop(record_transfer, ctx.memory, nb, cell, tab.path, d['demo'], transfer, d['picked'])
