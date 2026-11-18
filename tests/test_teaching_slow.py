@@ -8,6 +8,30 @@ from rupaka.spec import gallery
 pytestmark = pytest.mark.slow
 
 
+def test_generated_lesson_predict_gate(tmp_path, monkeypatch):
+    from test_generated_demo import generated_lesson
+    nb, model, lr, spec = generated_lesson(monkeypatch)
+    path = tmp_path/'generated.ipynb'; nb.save(path)
+    async def go(pg):
+        await _open(pg, path)
+        host = pg.locator('.lee-cell[data-i="2"] .lee-rupaka')
+        await host.locator('button.go').wait_for(timeout=5000)
+        assert await host.locator('.rk-slider').first.evaluate("e => e.classList.contains('rk-locked')")
+        assert await host.get_by_role('button', name='Keep this run', exact=True).is_disabled()
+        import os
+        if shot := os.getenv('LEELA_DEMO_SCREENSHOT'): await pg.screenshot(path=shot)
+        await host.locator('.opts button', has_text='60').dispatch_event('click')
+        async with pg.expect_response('**/lesson/predict'): await host.locator('button.go').click()
+        await host.locator('p.verdict').wait_for()
+        assert not await host.locator('.rk-slider').first.evaluate("e => e.classList.contains('rk-locked')")
+        await host.get_by_role('button', name='Keep this run', exact=True).click()
+        await host.get_by_role('button', name='Try a new case', exact=True).click()
+        transfer = host.locator('.lee-rupaka-transfer')
+        await transfer.get_by_text('To reach transfer:', exact=False).wait_for()
+        assert await host.locator('.rk-plot').first.is_hidden()
+    asyncio.run(_page(go, tmp_path))
+
+
 def test_prediction_retry_then_unaided_transfer(tmp_path, monkeypatch):
     from leela.blocks.nb import app
     monkeypatch.setattr(app, 'grade_explanation', lambda *a: dict(status='pending'))
