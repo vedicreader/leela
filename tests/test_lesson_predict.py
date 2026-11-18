@@ -132,7 +132,12 @@ def test_predict_in_a_plain_notebook_does_not_open_the_store(serve):
 
 def test_predict_in_an_exercise_lesson(serve):
     r = serve(lesson(exercise=EXERCISE))
-    assert len(r.nb.cells) == 7
+    assert len(r.nb.cells) == 6
+    prediction = next(c for c in r.nb.cells if c.extra.get('lesson', {}).get('role') == 'prediction')
+    code = next(c for c in r.nb.cells if c.id == prediction.extra['lesson']['for'])
+    card = next(c for c in r.nb.cells if c.extra.get('lesson', {}).get('role') == 'card')
+    assert code.cell_type == 'code' and code.source.strip() and code.source == EXERCISE['stub']
+    assert card.extra['lesson']['for'] == code.id
     assert post(r, picked=4).json()['logged']
     assert len(attempts(r)) == 1
 
@@ -196,7 +201,7 @@ def test_predict_edited_demo_reuses_its_shelf_demo(rig):
     assert sorted(a.question for a in attempts(rig)) == ['What is 8 / 2?', 'What is half of 8?']
 
 def test_predict_an_edit_to_another_cell_does_not_block(rig):
-    assert rig.c.post('/nb/edit', json=dict(path=str(rig.p), op='source', i=3, source='print(1)')).json()['ok']
+    assert rig.c.post('/nb/edit', json=dict(path=str(rig.p), op='source', i=0, source='A new intro.')).json()['ok']
     assert post(rig, picked=4).json()['logged']
 
 def test_predict_renamed_copy_is_the_same_attempt(rig, tmp_path):

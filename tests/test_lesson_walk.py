@@ -4,6 +4,7 @@ from fastcore.basics import AttrDict, first
 from abhyasa.learner import Learning
 from leela.blocks.memory.memory import Memory
 from leela.blocks.nb.lesson import exercise_filing, lesson_charter, lesson_notebook, lesson_step, lock, prediction_filing, record_card, walk_meta
+from tests.conftest import code_lesson
 from leela.blocks.nb.nb import Notebook
 from learn_data import JID, NB_JID, nb_walk, rig  # noqa: F401
 
@@ -35,7 +36,7 @@ def test_a_source_line_shows_hostile_metadata_as_text():
     assert '<i>' not in h and h.count('<a ') == 1 and 'href="https://example.org/a%20b%3Ec"' in h and 'a] (b) &lt;i&gt;' in h
 
 def test_a_card_from_a_walk_lesson_carries_the_walk_meta(tmp_path):
-    mem, nb = Memory(path=tmp_path/'vault.db', offline=True), lesson_notebook('Softmax', step=STEP)
+    mem, nb = Memory(path=tmp_path/'vault.db', offline=True), code_lesson('Softmax', step=STEP)
     code = nb[3]; code.source, code.execution_count = 'print(1)', 1
     code.outputs = [{'output_type': 'stream', 'name': 'stdout', 'text': '1\n'}]
     lock(code, '1')
@@ -87,7 +88,7 @@ def test_a_bad_nb_is_refused_before_a_lesson_is_written(rig, tmp_path_factory, m
     assert r.status_code == 400 and 'data:' in r.text and not (root/'lessons').exists()
 
 def test_a_card_from_a_plain_lesson_has_no_walk_meta(tmp_path):
-    mem, nb = Memory(path=tmp_path/'vault.db', offline=True), lesson_notebook('Softmax')
+    mem, nb = Memory(path=tmp_path/'vault.db', offline=True), code_lesson('Softmax')
     code = nb[3]; code.source, code.execution_count = 'print(1)', 1
     code.outputs = [{'output_type': 'stream', 'name': 'stdout', 'text': '1\n'}]
     lock(code, '1')

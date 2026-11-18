@@ -10,7 +10,7 @@ TRAPS = 'Costs `$5 and $7` and \\$3 or `![x](` here.\n\n$$ q=' + TOKEN + ' $$\n\
 ASK = "I don't get alpha bar"
 
 def _lesson(tmp_path, monkeypatch, source):
-    from leela.blocks.nb.lesson import lesson_notebook
+    from tests.conftest import code_lesson
     monkeypatch.setenv('PLAYWRIGHT_BROWSERS_PATH', str(Path.home()/'Library/Caches/ms-playwright'))
     home = tmp_path/'home'
     (home/'Library').mkdir(parents=True)
@@ -18,7 +18,7 @@ def _lesson(tmp_path, monkeypatch, source):
     monkeypatch.setenv('HOME', str(home))
     monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path/'xdg-data'))
     monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'learning.db'))
-    nb = lesson_notebook('Noise')
+    nb = code_lesson('Noise')
     nb[1].source = source
     path = tmp_path/'noise.ipynb'; nb.save(path)
     return path

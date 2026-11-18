@@ -18,13 +18,12 @@ def test_new_lesson_creates_a_file_and_opens_a_normal_tab(tmp_path, name):
         assert path.is_file() and path.stem.isascii()
         nb = Notebook.load(path)
         assert nb.meta['lesson'] == {'v': 1, 'name': name}
-        assert [cell.cell_type for cell in nb.cells] == ['markdown', 'markdown', 'markdown', 'code', 'markdown']
+        assert [cell.cell_type for cell in nb.cells] == ['markdown', 'markdown']
         assert [cell.source for cell in nb.cells] == [cell.source for cell in lesson_notebook(name).cells]
-        assert nb[2].extra['lesson']['for'] == nb[4].extra['lesson']['for'] == nb[3].id
         assert ws.tab.path == str(path) and ws.tab.kind == 'notebook' and not ws.tab.scratch
         assert str(path) in r.text and 'id="tabbar"' in r.text
         state = c.get('/tab/state').json()
-        assert state['path'] == str(path) and len(state['cells']) == 5 and not state['stale']
+        assert state['path'] == str(path) and len(state['cells']) == 2 and not state['stale']
     assert list(tmp_path.rglob('*.ipynb')) == [path]
 
 def test_duplicate_lesson_names_preserve_existing_files(tmp_path):
@@ -105,7 +104,7 @@ def test_an_open_lesson_picks_up_an_agent_edit_through_disk_reload(tmp_path):
         assert c.post('/tab/reload', json={'path': str(path)}).json()['paths'] == [str(path)]
         after = c.get('/tab/state', params={'path': str(path)}).json()
         assert not after['stale'] and after['disk_version'] == watch['disk_version']
-        assert len(after['cells']) == 6 and after['cells'][-1]['source'] == 'Agent demo added on disk'
+        assert len(after['cells']) == 3 and after['cells'][-1]['source'] == 'Agent demo added on disk'
 
 @pytest.mark.parametrize('name', ['Softmax & ../x', None, ''])
 def test_new_lesson_action_uses_the_input_sheet_and_tab_strip(tmp_path, name):

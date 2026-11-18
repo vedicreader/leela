@@ -1,14 +1,14 @@
 import pytest
 from starlette.testclient import TestClient
 from leela.app import ide_app
-from leela.blocks.nb.lesson import lesson_notebook
+from tests.conftest import code_lesson
 from leela.blocks.nb.nb import Notebook
 from leela.workspace import Workspace
 
 @pytest.mark.parametrize('confidence', [10, 30, 50, 70, 90, None])
 def test_prediction_confidence_uses_cell_edit_and_save(tmp_path, confidence):
     path = tmp_path/'lesson.ipynb'
-    nb = lesson_notebook('Confidence')
+    nb = code_lesson('Confidence')
     nb[2].extra['other'] = {'keep': True}
     nb.save(path)
     ws = Workspace(roots=[tmp_path])
@@ -31,7 +31,7 @@ def test_prediction_confidence_uses_cell_edit_and_save(tmp_path, confidence):
 @pytest.mark.parametrize('confidence', [0, 60, True, '70', 70.0])
 def test_prediction_confidence_rejects_invalid_values(tmp_path, confidence):
     path = tmp_path/'lesson.ipynb'
-    nb = lesson_notebook('Confidence')
+    nb = code_lesson('Confidence')
     nb.save(path)
     ws = Workspace(roots=[tmp_path]); ws.open(path)
     with TestClient(ide_app(ws)) as client:
@@ -43,7 +43,7 @@ def test_prediction_confidence_rejects_invalid_values(tmp_path, confidence):
 @pytest.mark.parametrize('i', [0, 3, 4])
 def test_confidence_changes_only_prediction_markdown(tmp_path, i):
     path = tmp_path/'lesson.ipynb'
-    nb = lesson_notebook('Confidence'); nb.save(path)
+    nb = code_lesson('Confidence'); nb.save(path)
     ws = Workspace(roots=[tmp_path]); ws.open(path)
     with TestClient(ide_app(ws)) as client:
         client.get('/tab/state')

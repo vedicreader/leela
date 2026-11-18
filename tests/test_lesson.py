@@ -79,26 +79,42 @@ def test_lesson_notebook_template_and_metadata_roundtrip():
     nb = lesson_notebook('Softmax')
     assert isinstance(nb, Notebook) and nb.path == ''
     assert nb.meta['lesson'] == dict(v=1, name='Softmax')
-    assert len(nb) == 5
-    intro, demo, prediction, code, card = nb.cells
-    assert [c.cell_type for c in nb.cells] == ['markdown', 'markdown', 'markdown', 'code', 'markdown']
+    assert len(nb) == 2
+    intro, demo = nb.cells
+    assert [c.cell_type for c in nb.cells] == ['markdown', 'markdown']
     assert 'Softmax' in intro.source and 'lesson notebook' in intro.source
     assert demo.source == 'No demo yet. Ask the tutor to add one.'
-    assert len({c.id for c in nb.cells}) == 5
-    assert prediction.extra['lesson'] == {'role': 'prediction', 'for': code.id}
-    assert card.extra['lesson'] == {'role': 'card', 'for': code.id}
-    assert '### Question' in card.source and '### Thinking' in card.source
-    assert '<!--' in card.source and '-->' in card.source
-    assert parse_card(card.source) == dict(question='', thinking='')
-    compile(code.source, '<lesson>', 'exec')
-    assert code.source.strip()
+    assert len({c.id for c in nb.cells}) == 2
     assert all(Cell.from_nb(c.nbcell()).extra == c.extra for c in nb.cells)
     other = lesson_notebook('Other')
     assert not {c.id for c in nb.cells} & {c.id for c in other.cells}
     nb.meta['lesson']['name'] = 'Changed'
-    prediction.extra['lesson']['role'] = 'changed'
     assert other.meta['lesson']['name'] == 'Other'
-    assert other[2].extra['lesson']['role'] == 'prediction'
+
+def test_a_lesson_with_code_keeps_its_prediction_and_card():
+    from tests.conftest import code_lesson
+    nb = code_lesson('Softmax')
+    intro, demo, prediction, code, card = nb.cells
+    assert [c.cell_type for c in nb.cells] == ['markdown', 'markdown', 'markdown', 'code', 'markdown']
+    assert prediction.extra['lesson'] == {'role': 'prediction', 'for': code.id}
+    assert card.extra['lesson'] == {'role': 'card', 'for': code.id}
+    assert '### Question' in card.source and '### Thinking' in card.source and '<!--' in card.source
+    assert parse_card(card.source) == dict(question='', thinking='')
+    compile(code.source, '<lesson>', 'exec')
+    assert all(Cell.from_nb(c.nbcell()).extra == c.extra for c in nb.cells)
+
+def test_an_empty_lesson_has_no_pass_code_no_prediction_and_a_neutral_intro():
+    from leela.blocks.nb.exercise import exercise_cells
+    for nb in (lesson_notebook('Softmax'), lesson_notebook('Softmax', step=dict(walk='w', step=0, text='A quote.', note='A note.'))):
+        assert not [c for c in nb.cells if c.cell_type == 'code'] and 'pass' not in [c.source for c in nb.cells]
+        assert not [c for c in nb.cells if c.extra.get('lesson', {}).get('role') in ('prediction', 'card')]
+        assert 'Softmax' in nb[0].source and 'lesson notebook' in nb[0].source and 'predict' not in nb[0].source.lower()
+        assert nb[1].source == 'No demo yet. Ask the tutor to add one.'
+        assert len(nb) == 2 and nb.meta['lesson']['name'] == 'Softmax'
+    later = lesson_notebook('Softmax')
+    task, code = exercise_cells(dict(task='Double it.', fname='double', stub='def double(x): pass', tests=[dict(test='assert double(1) == 2', say='doubles 1', shown=True)]))
+    later.insert(len(later), task); later.insert(len(later), code)
+    assert [c.cell_type for c in later.cells] == ['markdown', 'markdown', 'markdown', 'code'] and task.extra['exercise']['for'] == code.id
 
 def test_charter_uses_dependency_rules_and_hint_order(abhyasa_cfg):
     charter = lesson_charter()

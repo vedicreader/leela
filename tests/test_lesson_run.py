@@ -4,14 +4,14 @@ from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 from leela.app import ide_app
-from leela.blocks.nb.lesson import lesson_notebook
+from tests.conftest import code_lesson
 from leela.blocks.nb.nb import Notebook
 from leela.workspace import Workspace
 
 @pytest.fixture
 def lesson_client(tmp_path):
     p = tmp_path/'lesson.ipynb'
-    nb = lesson_notebook('Output')
+    nb = code_lesson('Output')
     nb[2].source = 'Draft guess'
     nb[2].extra['lesson']['confidence'] = 30
     nb[3].source = 'print(42)'

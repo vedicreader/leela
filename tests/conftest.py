@@ -71,6 +71,16 @@ from leela.app import ide_app
 from leela.blocks.runtime.kernels import ExecOutcome, KernelPool
 from leela.workspace import Workspace
 
+def code_lesson(name, step=None):
+    "A lesson with code to guess about: the intro, the demo line, then a `pass` cell with its prediction before it and its card after it, as a tutor's code cell makes it."
+    from leela.blocks.nb.lesson import CARD, INTRO, lesson_notebook
+    from leela.blocks.nb.nb import Cell
+    nb, code = lesson_notebook(name, step=step), Cell(source='pass')
+    nb[0].source = nb[0].source.replace('A lesson notebook. Ask the tutor for a demo or an exercise.', INTRO)
+    for c in (Cell(cell_type='markdown', extra={'lesson': {'role': 'prediction', 'for': code.id}}), code,
+              Cell(source=CARD, cell_type='markdown', extra={'lesson': {'role': 'card', 'for': code.id}})): nb.insert(len(nb), c)
+    return nb
+
 def history_file(ws):
     """The conversation log, checked before a test replaces it."""
     p = _pathlib.Path(ws.ai.history_path)

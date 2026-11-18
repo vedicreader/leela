@@ -77,10 +77,11 @@ def StepPage(v, q, pane:bool=False, root=None, jobs=None):
         from .tools import env_job, env_state, tool_key
         if names := (v.get('nb') or {}).get('requires'): st = env_state(jobs, key := tool_key(names))
         from .learn import passages, walk_url
+        from abhyasa.contract import tex_dollars
         r, back = v.step.get('read') or {}, walk_url(q.walk, v.i)
         title, step = v.j.title, str(v.i)
         body = [P(r['section'], cls='lee-learn-section') if r.get('section') else None,
-                *[x for p in passages(v.j, r) for x in (Blockquote(NotStr(md_html(p.text))), _Source(p))],
+                *[x for p in passages(v.j, r) for x in (Blockquote(NotStr(md_html(tex_dollars(p.text)))), _Source(p))],
                 Div(NotStr(md_html(v.step['note'])), cls='lee-learn-note') if v.step.get('note') else None,
                 P('Idea: ', Strong(v.name), cls='lee-learn-line'), _Steps(q, v.i, len(v.j.steps), pane), _Data(v), st and _Env(v, q, pane, key, st, env_job(jobs, key)),
                 P(A('Back to the walk ↗', href=back, target='_blank', rel='noopener', cls='lee-learn-back'), cls='lee-learn-line') if back else None]

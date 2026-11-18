@@ -638,7 +638,7 @@ def test_a_step_names_its_sources_in_words(rig, tmp_path_factory, monkeypatch):
     nb_walk(lr)
     t = c.get(f'/learn?walk={NB_JID}&step=0').text
     assert re.search(r'<strong>your source</strong>\s*· Comic notes · section 2', t) and 'A caption names who acts.' in t
-    assert re.search(r'<strong>from the web</strong>\s*· example\.org · \d+ \w+ 2026 · <a href="https://example\.org/c"[^>]*>Captions</a>', t)
+    assert re.search(r'<strong>from the web</strong>\s*· example\.org · read on \d+ \w+ 2026 · <a href="https://example\.org/c"[^>]*>Captions</a>', t)
     assert '<strong>your source</strong>' in c.get(f'/learn?walk={JID}&step=0').text and 'href="/v/' not in t
 
 def _abhyasa_at(monkeypatch, d, **addr):

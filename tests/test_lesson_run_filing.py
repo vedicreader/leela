@@ -64,7 +64,8 @@ def test_every_attempt_carries_the_step_concept(tmp_path):
     code = first(c for c in nb.cells if c.extra.get('exercise', {}).get('tests'))
     code.extra['exercise']['state'].update(checks=1, passed=True, grade=dict(score=9, note='Clear.', hash=''))
     record_exercise(mem, exercise_filing(nb, code, path))
-    card = lesson_notebook('Caption', step=STEP); run = card[3]
+    from tests.conftest import code_lesson
+    card = code_lesson('Caption', step=STEP); run = card[3]
     run.source, run.execution_count = 'print(1)', 1
     run.outputs = [{'output_type': 'stream', 'name': 'stdout', 'text': '1\n'}]
     lock(run, '1'); record_card(mem, card, run, str(path))

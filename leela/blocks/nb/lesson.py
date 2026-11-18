@@ -123,15 +123,17 @@ def _walk_of(step) -> dict:
 
 def lesson_notebook(name, exercise=None, step:dict|None=None) -> Notebook:
     "A lesson notebook for `name`; with the walk `step` (`walk`, `step`, `section`, `slug`, `text`, `note`), its first cell quotes the passage and the note, and its meta names the step."
-    code, meta = Cell(source='pass'), {'v': 1, 'name': name}
+    meta = {'v': 1, 'name': name}
     if step is not None: meta['walk'] = _walk_of(step)
+    if exercise is None:   # nothing to run yet: no code to guess about, so no `pass` cell, prediction or card until a demo or exercise comes
+        return Notebook([Cell(source=f'# {name}\n\nA lesson notebook. Ask the tutor for a demo or an exercise.' + (_passage(step) if step else ''), cell_type='markdown'),
+                         Cell(source='No demo yet. Ask the tutor to add one.', cell_type='markdown')], meta={'lesson': meta})
+    task, code = exercise_cells(exercise)   # the exercise code is what the learner guesses about and what the card is for; no dummy `pass` cell
     return Notebook([
         Cell(source=f'# {name}\n\nA lesson notebook. Predict the output before running the code. Then write your reasoning in the card.' + (_passage(step) if step else ''),
              cell_type='markdown'),
         Cell(source='No demo yet. Ask the tutor to add one.', cell_type='markdown'),
-        Cell(cell_type='markdown', extra={'lesson': {'role': 'prediction', 'for': code.id}}),
-        code,
-        *(exercise_cells(exercise) if exercise is not None else []),
+        task, Cell(cell_type='markdown', extra={'lesson': {'role': 'prediction', 'for': code.id}}), code,   # the guess sits right above the code it is about
         Cell(source='### Question\n\n### Thinking\n\n<!-- Write the question under Question and your reasoning under Thinking. -->',
              cell_type='markdown', extra={'lesson': {'role': 'card', 'for': code.id}}),
     ], meta={'lesson': meta})

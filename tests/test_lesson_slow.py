@@ -6,6 +6,17 @@ from test_completion_caret_slow import _real_page
 pytestmark = pytest.mark.slow
 SHOTS = Path(__file__).parents[1]/'target/learn/sliceF'
 
+def _new_lessons_have_code(monkeypatch):
+    "`lesson/new` now makes the two-cell lesson (intro, 'No demo yet'). The reveal and confidence steps need the code lesson, so a lesson made in the page is built as `code_lesson`. The route imports `lesson_notebook` from `leela.blocks.nb.lesson` when it runs and holds no name of its own in `leela.blocks.tabs.app`, so the module attribute is the one to patch; `code_lesson` builds on the real function, so the patch hands it back while it builds."
+    from tests.conftest import code_lesson
+    from leela.blocks.nb import lesson
+    real = lesson.lesson_notebook
+    def shaped(name, *a, **k):
+        monkeypatch.setattr(lesson, 'lesson_notebook', real)
+        try: return code_lesson(name, *a, **k)
+        finally: monkeypatch.setattr(lesson, 'lesson_notebook', shaped)
+    monkeypatch.setattr(lesson, 'lesson_notebook', shaped)
+
 def test_lesson_reveal_confidence_and_saved_state(tmp_path, monkeypatch):
     monkeypatch.setenv('PLAYWRIGHT_BROWSERS_PATH', str(Path.home()/'Library/Caches/ms-playwright'))
     home = tmp_path/'home'
@@ -14,6 +25,7 @@ def test_lesson_reveal_confidence_and_saved_state(tmp_path, monkeypatch):
     monkeypatch.setenv('HOME', str(home))
     monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path/'xdg-data'))
     assert Path(os.environ['XDG_CONFIG_HOME']).is_relative_to('/private/var') or 'leela-test' in os.environ['XDG_CONFIG_HOME']
+    _new_lessons_have_code(monkeypatch)
     async def go(pg):
         await pg.set_viewport_size({'width': 1440, 'height': 1100})
         pg.set_default_timeout(15000)
@@ -166,7 +178,8 @@ def test_lesson_due_review_question_before_last_answer(tmp_path, monkeypatch):
 def test_lesson_predict_logs_a_gate(tmp_path, monkeypatch):
     from abhyasa.learner import Learning
     from leela.blocks.memory.memory import Memory
-    from leela.blocks.nb.lesson import fence, lesson_notebook
+    from leela.blocks.nb.lesson import fence
+    from tests.conftest import code_lesson
     monkeypatch.setenv('PLAYWRIGHT_BROWSERS_PATH', str(Path.home()/'Library/Caches/ms-playwright'))
     home = tmp_path/'home'
     (home/'Library').mkdir(parents=True)
@@ -175,7 +188,7 @@ def test_lesson_predict_logs_a_gate(tmp_path, monkeypatch):
     monkeypatch.setenv('XDG_DATA_HOME', str(tmp_path/'xdg-data'))
     monkeypatch.setenv('VISHALAKSHI_VAULT', str(tmp_path/'learning.db'))
     gate = dict(type='gate', id='g1', prompt='What is half of 8?', options=[2, 4, 6], answer={'is': 4}, why='Why?')
-    nb = lesson_notebook('Halves')
+    nb = code_lesson('Halves')
     nb[1].source = 'Pick one.\n\n' + fence(dict(id='halves', blocks=[dict(type='stack', blocks=[gate])]))
     path = tmp_path/'halves.ipynb'; nb.save(path)
     async def go(pg):

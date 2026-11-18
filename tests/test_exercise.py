@@ -63,24 +63,23 @@ def test_exercise_cells(spec):
     assert exercise_cells(spec)[1].extra['exercise']['state']['checks'] == 0
     assert len({task.id, code.id, *(c.id for c in exercise_cells(spec))}) == 4
 
-def test_lesson_without_exercise_is_unchanged():
+def test_lesson_without_exercise_has_no_code_yet():
     nb = lesson_notebook('Numbers')
-    assert len(nb.cells) == 5
-    assert [c.cell_type for c in nb.cells] == ['markdown', 'markdown', 'markdown', 'code', 'markdown']
-    assert nb.cells[0].source == '# Numbers\n\nA lesson notebook. Predict the output before running the code. Then write your reasoning in the card.'
+    assert [c.cell_type for c in nb.cells] == ['markdown', 'markdown']
+    assert nb.cells[0].source == '# Numbers\n\nA lesson notebook. Ask the tutor for a demo or an exercise.'
     assert nb.cells[1].source == 'No demo yet. Ask the tutor to add one.'
-    assert nb.cells[2].extra == {'lesson': {'role': 'prediction', 'for': nb.cells[3].id}}
-    assert nb.cells[3].source == 'pass'
-    assert nb.cells[4].extra == {'lesson': {'role': 'card', 'for': nb.cells[3].id}}
     assert nb.meta == {'lesson': {'v': 1, 'name': 'Numbers'}}
 
-def test_lesson_adds_exercise_after_code(spec):
-    nb, old = lesson_notebook('Numbers', exercise=spec), lesson_notebook('Numbers')
-    assert len(nb.cells) == 7
-    assert [c.source for c in nb.cells[:4] + nb.cells[6:]] == [c.source for c in old.cells]
-    task, code = nb.cells[4:6]
+def test_lesson_with_exercise_has_no_dummy_pass(spec):
+    nb = lesson_notebook('Numbers', exercise=spec)
+    assert [c.source for c in nb.cells if c.cell_type == 'code'] == [spec['stub']]   # the exercise code is the only code cell, no bare `pass`
+    assert [c.cell_type for c in nb.cells] == ['markdown'] * 4 + ['code', 'markdown']
+    assert nb.cells[0].source.startswith('# Numbers\n\nA lesson notebook. Predict the output')
+    assert nb.cells[1].source == 'No demo yet. Ask the tutor to add one.'
+    task, pred, code, card = nb.cells[2:]   # the task first, then the guess right above the code it is about
     assert task.extra['exercise']['for'] == code.id and code.source == spec['stub']
-    assert nb.cells[6].extra['lesson']['for'] == nb.cells[3].id
+    assert pred.extra['lesson'] == {'role': 'prediction', 'for': code.id}   # the guess is about the exercise code below
+    assert card.extra['lesson'] == {'role': 'card', 'for': code.id}
 
 @pytest.mark.parametrize('source, found, statuses, got', [
     ('def double(x): return x*2', True, ['pass', 'pass'], None),
