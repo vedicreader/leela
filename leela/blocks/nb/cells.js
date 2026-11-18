@@ -379,8 +379,94 @@ const mdAttached = c => el => $$('img[src^="attachment:"]', el).forEach(img => {
   const a = c.attachments?.[img.getAttribute('src').slice(11)], t = a && Object.keys(a)[0];
   if (t) img.src = `data:${t};base64,${[].concat(a[t]).join('')}`;
 });
-//: What a notebook markdown surface runs after each render; `c` is null on a slide that keeps no cache.
-const mdPaint = (c, cached = true) => (el, src) => { if (c) mdAttached(c)(el); const k = cached && c; rupakaFences(el, k ? `md:${c.id}` : null, k ? src : null, k ? lessonRestore(c.id, src) : null); };
+const rupakaWrites = new Map();
+function rupakaInputs(c, source) {
+  const tab = lee.tabKey, path = lee.path, gates = lessonRestore(c.id, source);
+  const entry = spec => {
+    const key = JSON.stringify([tab, path, c.id, spec.id, spec]), kept = rupakaWrites.get(key);
+    if (kept) { kept.source = source; return kept; }
+    const e = {source, deferred: {}};
+    const current = () => lee.tabKey === tab && lee.path === path && lee.cells.find(x => x.id === c.id && x.cell_type === 'markdown' && mdSource(x) === e.source);
+    let pending = null, timer = null, flight = false;
+    const send = () => {
+      timer = null;
+      if (flight) return;
+      if (!current()) { pending = null; return; }
+      const inputs = pending; if (!inputs) return;
+      pending = null; flight = true;
+      const mounted = lee.mountedAt, here = () => lee.mountedAt === mounted && current();
+      const run = lee.nbQueue.then(async () => {
+        await headingSynced(tab);
+        const cell = here(); if (!cell) return;
+        const source = mdSource(cell), src = await srcHash(source);
+        if (!here() || mdSource(cell) !== source) return;
+        const rev = cell.extra?.rupaka?.[spec.id]?.rev ?? 0;
+        const sources = changedRows(tab, lee.cells, nextSeq());
+        try {
+          const r = await post('/nb/edit', {op: 'rupaka_inputs', path: tab, id: c.id, i: lee.cells.indexOf(cell), demo: spec.id, src, rev, inputs, sources});
+          const live = here(); if (!live) return;
+          live.extra = {...live.extra, rupaka: {...live.extra?.rupaka, [spec.id]: r.record}};
+          noteSeen(tab, r.cells.filter(x => !(r.clash || []).includes(x.id)));
+          lee.nbVersions.set(tab, Math.max(r.version, lee.nbVersions.get(tab) || 0));
+          markDirty();
+        } catch (e) {
+          const live = here(); if (!live) return;
+          if (e.body?.kind === 'rupaka_conflict') {
+            live.extra = {...live.extra, rupaka: {...live.extra?.rupaka, [spec.id]: e.body.record}};
+          }
+          console.warn('Leela demo inputs save:', e);
+        }
+      }).catch(e => { if (here()) console.warn('Leela demo inputs save:', e); }).finally(() => {
+        flight = false;
+        if (pending && !timer) timer = setTimeout(send, 400);
+      });
+      lee.nbQueue = run;
+    };
+    e.options = {save: inputs => { if (!current()) return; pending = {...inputs, ...e.deferred}; clearTimeout(timer); timer = setTimeout(send, 400); }};
+    rupakaWrites.set(key, e);
+    return e;
+  };
+  const opts = spec => typeof spec.id === 'string' && spec.id ? entry(spec).options : undefined;
+  const restore = async (inner, spec) => {
+    const e = entry(spec);
+    let inputs = {};
+    e.deferred = {};
+    try {
+      const src = await srcHash(source), cell = lee.tabKey === tab && lee.path === path && lee.cells.find(x => x.id === c.id && mdSource(x) === source);
+      const record = cell?.extra?.rupaka?.[spec.id];
+      if (record?.v === 1 && record.src === src && record.inputs && !Array.isArray(record.inputs) && typeof record.inputs === 'object') inputs = record.inputs;
+    } catch (e) { console.warn('Leela demo inputs restore:', e); }
+    if (gates) await gates(inner, spec);
+    const locks = {}, defaults = spec.state || {};
+    const walk = (blocks, parents = []) => (blocks || []).forEach(b => {
+      const gates = [...parents, b.lock, b.after].filter(Boolean);
+      for (const k of [b.bind, b.to, b.x, b.y, b.angle]) if (typeof k === 'string' && Object.hasOwn(defaults, k) && gates.length) {
+        const held = locks[k] ||= new Set(); gates.forEach(g => held.add(g));
+      }
+      walk(b.blocks, gates);
+    });
+    walk(spec.blocks);
+    const blocked = k => [...locks[k]].some(g => inner.rupaka.st.gate[g] !== 'done');
+    const visible = {...inputs};
+    for (const k of Object.keys(locks)) if (blocked(k) && Object.hasOwn(inputs, k)) { e.deferred[k] = inputs[k]; delete visible[k]; }
+    Rupaka.set(inner, visible);
+    inner.leeInputs = () => {
+      const release = () => {
+        const ready = {};
+        for (const k of Object.keys(e.deferred)) if (!blocked(k)) { ready[k] = e.deferred[k]; delete e.deferred[k]; }
+        if (Object.keys(ready).length) Rupaka.set(inner, ready);
+      };
+      inner.rupaka.on(release); release();
+    };
+    inner.leeInputs();
+  };
+  return {restore, opts};
+}
+const mdPaint = (c, cached = true) => (el, src) => {
+  if (c) mdAttached(c)(el);
+  const k = cached && c && !lee.present, inputs = k && rupakaInputs(c, src);
+  rupakaFences(el, k ? `md:${lee.tabKey}:${c.id}` : null, k ? src : null, inputs?.restore, inputs?.opts);
+};
 const mdCellHost = c => `<div class="lee-md-cell lee-md" id="mdr-${esc(c.id)}" title="double-click to edit · ${esc(displayChord('enter'))}"></div>`;
 const mdCellOf = i => $(`.lee-cell[data-i="${i}"]`);
 function paintMarkdownCell(el, c, now = false) {

@@ -84,9 +84,9 @@ const SCEN = {
   },
   async keepfence() {
     const el = new N('div'); body.append(el), text = JSON.stringify({blocks: []});
-    fence(el, text); ctx.rupakaFences(el, 'md:c1'); await sleep(20);
-    const first = el.children[0]; fence(el, text); ctx.rupakaFences(el, 'md:c1');
-    return {same: el.children[0] === first, class: first.className, mount: calls.mount.length, css: calls.css, load: calls.load};
+    fence(el, text); ctx.rupakaFences(el, 'md:c1', 'Before'); await sleep(20);
+    const first = el.children[0]; first.liveState = 60; fence(el, text); ctx.rupakaFences(el, 'md:c1', 'After');
+    return {same: el.children[0] === first && el.children[0].liveState === 60, class: first.className, mount: calls.mount.length, css: calls.css, load: calls.load};
   },
   async loadfail() {
     ctx.fetch = async () => (calls.css++, {ok: false, status: 404, statusText: 'Not Found'});

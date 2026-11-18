@@ -657,6 +657,7 @@ function rupakaRevive(e) {
   for (const x of s.st.log || []) picks[x.gate] = x.picked == null ? null : String(x.picked);
   Rupaka.mount(e.inner, e.spec, e.opts); Rupaka.set(e.inner, state);
   rupakaSettle(e.inner, Object.fromEntries(Object.entries(s.st.gate).filter(([, v]) => v === 'done').map(([id]) => [id, picks[id] ?? null])));
+  e.inner.leeInputs?.();
 }
 //: `rupakaRevive` for each kept demo inside `root`, which was off the page.
 const rupakaReviveIn = root => { for (const e of rupaka.hosts.values()) if (root.contains(e.host)) rupakaRevive(e); };
@@ -741,13 +742,13 @@ function sha256Hex(bytes) {
 //: `nb.src_hash` in the page: the first 12 hex digits of the SHA-256 of `text`.
 const srcHash = async (text, b = new TextEncoder().encode(text)) => (globalThis.crypto?.subtle ? [...new Uint8Array(await crypto.subtle.digest('SHA-256', b))].map(x => x.toString(16).padStart(2, '0')).join('') : sha256Hex(b)).slice(0, 12);
 //: Each `rupaka` fence in `el` becomes a demo; a bad one keeps its code and gains one error line. `src` is the cell source the host was drawn from, and `restore` goes to `rupakaDraw` for a new host.
-function rupakaFences(el, owner = null, src = null, restore = null) {
+function rupakaFences(el, owner = null, src = null, restore = null, opts = undefined) {
   const pass = owner && rupakaPass(owner), seen = new Map();
   $$('pre > code.language-rupaka', el).forEach(code => {
     const pre = code.parentElement, text = code.textContent, n = (seen.get(text) || 0) + 1; seen.set(text, n);
     const fail = err => { if (!pre.nextElementSibling?.matches('.lee-rk-err')) pre.after(rupakaErr(err)); };
     let spec; try { spec = JSON.parse(text); } catch (err) { return fail(err); }
-    const e = rupakaDraw(spec, pass && `${owner}:${n}:${text.length}:${text}`, pass, restore);
+    const e = rupakaDraw(spec, pass && `${owner}:${n}:${text.length}:${text}`, pass, restore, typeof opts === 'function' ? opts(spec) : opts);
     if (src != null) e.host.leeSource = src;
     const settle = () => e.err ? fail(e.err) : pre.isConnected && pre.replaceWith(e.host);
     if (e.ok || e.err) settle(); else e.done.then(() => { settle(); rupakaRendered(e.host); });

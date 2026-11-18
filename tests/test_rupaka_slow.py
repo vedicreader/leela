@@ -112,6 +112,69 @@ def test_lesson_gate_stays_done_after_a_reload(tmp_path):
         assert (await h.locator('p.verdict').inner_text()).startswith('You said At a point.')
     asyncio.run(_page(go, tmp_path))
 
+@pytest.mark.parametrize('lesson', [False, True])
+def test_notebook_rupaka_inputs_survive_reload(tmp_path, lesson):
+    from rupaka import __file__ as rupaka_file
+    from leela.blocks.nb.nb import Cell, Notebook
+    spec = json.loads((Path(rupaka_file).parent/'demos'/'throw-angle.json').read_text())
+    path = tmp_path/'throw.ipynb'
+    i = 1 if lesson else 0
+    if lesson:
+        from leela.blocks.nb.lesson import lesson_notebook
+        nb = lesson_notebook('Throw'); nb[i].source = fence(spec)
+    else: nb = Notebook([Cell(cell_type='markdown', source=fence(spec))])
+    nb.save(path)
+    demo = f'.lee-cell[data-i="{i}"] .lee-md-cell .lee-rupaka'
+    async def go(pg):
+        await _open(pg, path)
+        h = pg.locator(demo)
+        await h.locator('input[type=range]').first.wait_for()
+        await h.locator('.opts button', has_text='60').dispatch_event('click')
+        async with pg.expect_response('**/lesson/predict'): await h.locator('button.go').click()
+        await h.locator('p.verdict').wait_for()
+        async with pg.expect_response(lambda r: r.url.endswith('/nb/edit') and r.request.post_data_json.get('op') == 'rupaka_inputs', timeout=5000) as got:
+            await h.locator('input[type=range]').first.evaluate("e => { e.value = '60'; e.dispatchEvent(new Event('input', {bubbles: true})); e.dispatchEvent(new Event('change', {bubbles: true})); }")
+        response = await got.value
+        assert response.status == 200, await response.text()
+        assert await h.evaluate('h => Rupaka.state([...h.shadowRoot.children].find(n => n.rupaka)).a') == 60
+        saved = await pg.request.post(pg.url.rstrip('/') + '/nb/save', data={'path': str(path)})
+        assert saved.ok, await saved.text()
+        assert Notebook.load(path)[i].extra['rupaka']['throw-angle']['inputs']['a'] == 60
+        await pg.reload(wait_until='networkidle')
+        await pg.wait_for_function('window.lee && lee.keys.length')
+        if not await pg.locator(demo).count(): await _open(pg, path)
+        h = pg.locator(demo)
+        await h.locator('input[type=range]').first.wait_for()
+        if lesson:
+            await h.locator('p.verdict').wait_for()
+            assert await h.evaluate('h => [...h.shadowRoot.children].find(n => n.rupaka).rupaka.st.gate.g') == 'done'
+            assert await h.evaluate('h => Rupaka.state([...h.shadowRoot.children].find(n => n.rupaka)).a') == 60
+        else:
+            assert await h.evaluate('h => [...h.shadowRoot.children].find(n => n.rupaka).rupaka.st.gate.g') == 'open'
+            assert await h.evaluate('h => Rupaka.state([...h.shadowRoot.children].find(n => n.rupaka)).a') == spec['state']['a'] == 30
+            assert await h.locator('.rk-slider').first.evaluate("e => e.classList.contains('rk-locked')")
+            await h.locator('.rk-locknote', has_text='Locked until you lock in your prediction.').wait_for()
+            assert not await h.locator('.rk-plot path.gh').get_attribute('d')
+            await h.locator('input[type=range]').first.evaluate("e => { e.value = '60'; e.dispatchEvent(new Event('input', {bubbles: true})); }")
+            assert await h.evaluate('h => Rupaka.state([...h.shadowRoot.children].find(n => n.rupaka)).a') == 30
+            async with pg.expect_response(lambda r: r.url.endswith('/nb/edit') and r.request.post_data_json.get('op') == 'rupaka_inputs') as got:
+                await h.locator('input[type=range]').nth(1).evaluate("e => { e.value = '0.75'; e.dispatchEvent(new Event('input', {bubbles: true})); }")
+            assert (await (await got.value).json())['record']['inputs']['a'] == 60
+            await h.locator('.opts button', has_text='60').dispatch_event('click')
+            await pg.route('**/lesson/predict', lambda route: route.fulfill(status=503, json={'error': 'Try again.'}))
+            async with pg.expect_response('**/lesson/predict'): await h.locator('button.go').click()
+            await h.locator('p.note', has_text='Try again.').wait_for()
+            assert await h.evaluate('h => [...h.shadowRoot.children].find(n => n.rupaka).rupaka.st.gate.g') == 'open'
+            assert await h.evaluate('h => Rupaka.state([...h.shadowRoot.children].find(n => n.rupaka)).a') == 30
+            assert await h.locator('.rk-slider').first.evaluate("e => e.classList.contains('rk-locked')")
+            await pg.unroute('**/lesson/predict')
+            async with pg.expect_response('**/lesson/predict'): await h.locator('button.go').click()
+            await h.locator('p.verdict').wait_for()
+            assert await h.evaluate('h => Rupaka.state([...h.shadowRoot.children].find(n => n.rupaka)).a') == 60
+            assert not await h.locator('.rk-slider').first.evaluate("e => e.classList.contains('rk-locked')")
+    asyncio.run(_page(go, tmp_path))
+
+
 @pytest.mark.parametrize('browser', ['webkit', 'chromium'])
 def test_scene_draws_and_draws_again_after_a_tab_switch(tmp_path, browser):
     "A scene draws pixels in WebKit and Chromium, and still draws after its notebook leaves the page and comes back, which used to leave a dead WebGL context."
@@ -138,3 +201,29 @@ def test_scene_draws_and_draws_again_after_a_tab_switch(tmp_path, browser):
         px = await drawn(pg)
         assert not px['lost'] and px['ink'] > 500, px
     asyncio.run(_page(go, tmp_path, browser))
+
+
+def test_notebook_rupaka_prose_edit_keeps_host_and_saves_current_source(tmp_path):
+    from leela.blocks.nb.nb import Cell, Notebook, src_hash
+    spec = dict(rupaka=1, id='angle', state=dict(a=30), blocks=[dict(type='slider', bind='a', min=10, max=80)])
+    path = tmp_path/'prose.ipynb'
+    nb = Notebook([Cell(cell_type='markdown', source='Before.\n\n' + fence(spec))]); nb.save(path)
+    demo = '.lee-cell[data-i="0"] .lee-md-cell .lee-rupaka'
+    async def go(pg):
+        await _open(pg, path)
+        h = pg.locator(demo)
+        await h.locator('input[type=range]').wait_for()
+        await h.evaluate("h => { window.keptDemo = h; Rupaka.set([...h.shadowRoot.children].find(n => n.rupaka), {a: 60}); }")
+        source = 'After.\n\n' + fence(spec)
+        await pg.evaluate("source => { const c = lee.cells[0]; editMarkdownCell(0); LeeCM.setDoc(lee.editors.get(c.id), source); showRenderedMarkdown(c); }", source)
+        await pg.wait_for_function("document.querySelector('.lee-md-cell').textContent.includes('After.')")
+        await pg.wait_for_function(f"document.querySelector({demo!r})?.shadowRoot.querySelector('input[type=range]')")
+        assert await h.evaluate('h => h === window.keptDemo')
+        assert await h.evaluate('h => Rupaka.state([...h.shadowRoot.children].find(n => n.rupaka)).a') == 60
+        async with pg.expect_response(lambda r: r.url.endswith('/nb/edit') and r.request.post_data_json.get('op') == 'rupaka_inputs') as got:
+            await h.locator('input[type=range]').evaluate("e => { e.value = '65'; e.dispatchEvent(new Event('input', {bubbles: true})); }")
+        response = await got.value
+        assert response.status == 200, await response.text()
+        assert response.request.post_data_json['src'] == src_hash(source)
+        assert (await response.json())['record']['inputs']['a'] == 65
+    asyncio.run(_page(go, tmp_path))
