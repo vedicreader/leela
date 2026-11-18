@@ -117,7 +117,7 @@ def leela_skill(ai=None):
     menus = _menus()
     out = ['# What Leela can do\n\nLeela is an IDE for notebooks and code, with an agent, a vault, git, release and deploy. '
            'Each item says where it is: a menu, a pane, or a key. `mod` is Command on a Mac and Control elsewhere. '
-           'The keys are the user\'s own, from `keys.json`. Every action is also in the command palette.\n\n## Features\n']
+           'The keys are the user\'s own, from `keys.json`. All actions are in the palette.\n\n## Features\n']
     for title, where, what in FEATURES:
         w = '; '.join(_key(a, menus) or a for a in where)
         out.append(f'- **{title}** ({w}): {what}\n')

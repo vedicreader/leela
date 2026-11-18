@@ -1,4 +1,5 @@
-import hashlib, json, platform, re, sys
+import hashlib, json, platform, re, sys, time, uuid
+from copy import deepcopy
 from datetime import date
 from itertools import zip_longest
 from pathlib import Path
@@ -15,6 +16,7 @@ from .nb import Cell, Notebook, src_hash
 from .exercise import exercise_cells, exercise_meta
 
 CHARTER_TAIL = ('\nHint ladder:\n' + '\n'.join(f'{i}. {hint}' for i, hint in enumerate(HINTS, 1))
+    + '\nFor a follow-up to an existing demo, call set_demo_inputs with its cell id, demo id and current revision. Do not insert a replacement demo.'
     + '\nAdd demos only with add_demo. Never write the reveal, Leela builds it.'
     + '\nWhen the learner asks for another way, re-explain with a method not yet used from these:\n'
     + '\n'.join(f'- {name}: {METHODS[name]}' for name in TEXT_WAYS)
@@ -354,6 +356,55 @@ def _specs(cell):
         except ValueError: continue
         if isinstance(s, dict): specs.append(s)
     return specs
+
+def rupaka_keys():
+    from rupaka.spec import manifests
+    return {n: [k for k, p in m['props'].items() if p['type'] in ('key', 'numkey')] for n, m in manifests().items()}
+
+def rupaka_picks(memory, nb, cell):
+    if isinstance(lesson := nb.meta.get('lesson'), dict) and lesson.get('name'): return filed_picks(memory, nb, cell)
+    return getattr(nb, '_rupaka_picks', {}).get((cell.id, src_hash(cell.source)), {})
+
+def rupaka_edit(nb, cell, d, picks=None, followup=False):
+    def no(error, status=400, **kw): return dict(ok=False, error=error, **kw), status
+    if cell is None or cell.cell_type != 'markdown': return no('Rupaka inputs belong to a markdown cell.')
+    demo, inputs, rev = d.get('demo'), d.get('inputs'), d.get('rev')
+    specs = [s for s in _specs(cell) if isinstance(demo, str) and demo and s.get('id') == demo]
+    if len(specs) != 1: return no('This cell must have exactly one such demo.')
+    spec = specs[0]
+    if not isinstance(inputs, dict): return no('Rupaka inputs must be a JSON object.')
+    if not isinstance(spec.get('state'), dict) or inputs.keys() - spec['state'].keys(): return no('Unknown input key for this demo.')
+    if type(rev) is not int or rev < 0: return no('Rupaka revision must be a non-negative integer.')
+    records = cell.extra.get('rupaka', {})
+    if not isinstance(records, dict): return no('Unsupported Rupaka metadata. Inputs were not changed.')
+    record = records.get(demo)
+    if record is not None and (not isinstance(record, dict) or record.get('v') != 1 or type(record.get('rev')) is not int):
+        return no('Unsupported Rupaka record. Inputs were not changed.')
+    if d.get('src') != src_hash(cell.source) or rev != (record['rev'] if record else 0):
+        return no('This demo source or revision changed. Inputs were not saved.', 409, kind='rupaka_conflict', record=record)
+    trial = d.get('op') == 'rupaka_trial'
+    if trial and inputs.keys() != spec['state'].keys(): return no('A trial needs every input.')
+    if trial and any(f"{demo}:{g['id']}" not in (picks or {}) for g in _gates(spec.get('blocks'))):
+        return no('Lock in every gate before keeping this run.')
+    if followup:
+        keys = rupaka_keys()
+        def blocked(blocks, parents=()):
+            for b in blocks or []:
+                gates = (*parents, *[b[k] for k in ('lock', 'after') if b.get(k)])
+                if any(b.get(k) in inputs for k in keys.get(b['type'], []) if isinstance(b.get(k), str)):
+                    if any(f'{demo}:{g}' not in (picks or {}) for g in gates): return True
+                if blocked(b.get('blocks'), gates): return True
+            return False
+        if blocked(spec.get('blocks')): return no('That input is behind an open gate. Lock in first.')
+        inputs = {**spec['state'], **((record or {}).get('inputs', {}) if (record or {}).get('src') == d['src'] else {}), **inputs}
+    record = {**(record or {}), 'v': 1, 'src': d['src'], 'rev': rev + 1, 'inputs': deepcopy(inputs)}
+    if trial:
+        trials = record.get('trials', [])
+        if not isinstance(trials, list): return no('Unsupported Rupaka trials. Run was not kept.')
+        record['trials'] = [*trials, dict(id=uuid.uuid4().hex, n=len(trials) + 1, inputs=deepcopy(inputs), src=d['src'], at=time.time())]
+    cell.extra['rupaka'] = {**records, demo: record}
+    nb.dirty = True
+    return dict(ok=True, record=record), 200
 
 def demo_gate(cell, demo, gate):
     "`(spec, block)` of gate `gate` in demo `demo` among the `rupaka` fences of markdown `cell`; ValueError when there is none or more than one."

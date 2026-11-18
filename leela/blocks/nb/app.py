@@ -19,7 +19,7 @@ from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, OutFeed, RunningCellError, capped, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
-from .lesson import _specs, GUIDE_NEEDS, GUIDE_STREAM_NEEDS, EnvGone, check_anchors, check_demo, filed_picks, guide_board, lock, prediction_filing, record_card, record_prediction
+from .lesson import demo_gate, rupaka_picks, rupaka_edit, rupaka_keys, GUIDE_NEEDS, GUIDE_STREAM_NEEDS, EnvGone, check_anchors, check_demo, filed_picks, guide_board, lock, prediction_filing, record_card, record_prediction
 from .exercise import JUDGE, Refused, check_cell, exercise_meta, public_verdict
 from . import presentation
 
@@ -454,6 +454,8 @@ def connect(app, ctx):
                 owner_tab.dirty = True
         return StreamingResponse(events(), media_type='text/event-stream',
                                  headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
+    @rt('/nb/rupaka/keys')
+    def nb_rupaka_keys(): return rupaka_keys()
     @rt('/nb/edit')
     async def nb_edit(req):
         "Structural edits: insert / delete / move / type / split / merge, to the notebook `path` names, else the active one."
@@ -501,26 +503,18 @@ def connect(app, ctx):
             nb._checkpoint(i)
             nb[i].context_mode = mode
             nb.dirty = True
-        elif op == 'rupaka_inputs':
+        elif op in ('rupaka_inputs', 'rupaka_trial'):
             if not isinstance(d.get('id'), str) or not d['id']: return fail('Rupaka inputs need a cell id.')
-            if not 0 <= i < len(nb) or nb[i].cell_type != 'markdown': return fail('Rupaka inputs belong to a markdown cell.')
-            c, demo, inputs, rev = nb[i], d.get('demo'), d.get('inputs'), d.get('rev')
-            specs = [s for s in _specs(c) if isinstance(demo, str) and demo and s.get('id') == demo]
-            if not specs: return fail('This cell has no such demo.')
-            if not isinstance(inputs, dict): return fail('Rupaka inputs must be a JSON object.')
-            if any(not isinstance(s.get('state'), dict) or inputs.keys() - s['state'].keys() for s in specs):
-                return fail('Unknown input key for this demo.')
-            if type(rev) is not int or rev < 0: return fail('Rupaka revision must be a non-negative integer.')
-            records = c.extra.get('rupaka', {})
-            if not isinstance(records, dict): return fail('Unsupported Rupaka metadata. Inputs were not changed.')
-            record = records.get(demo)
-            if record is not None and (not isinstance(record, dict) or record.get('v') != 1 or type(record.get('rev')) is not int):
-                return fail('Unsupported Rupaka record. Inputs were not changed.')
-            if d.get('src') != src_hash(c.source) or rev != (record['rev'] if record else 0):
-                return fail('This demo source or revision changed. Inputs were not saved.', 409, kind='rupaka_conflict', record=record)
-            record = dict(v=1, src=d['src'], rev=rev + 1, inputs=inputs)
-            c.extra['rupaka'] = {**records, demo: record}
-            nb.dirty = True
+            if not 0 <= i < len(nb): return fail('Rupaka inputs belong to a markdown cell.')
+            c, picks = nb[i], {}
+            if op == 'rupaka_trial':
+                before = src_hash(c.source)
+                try: picks = await off_loop(rupaka_picks, ctx.memory, nb, c)
+                except Exception as e: return _vault_fail(e)
+                if c not in nb.cells or before != src_hash(c.source): return fail('This demo source changed.', 409, kind='rupaka_conflict', record=c.extra.get('rupaka', {}).get(d.get('demo')))
+            result, code = rupaka_edit(nb, c, d, picks)
+            if code != 200: return fail(result['error'], code, **{k: v for k, v in result.items() if k not in ('ok', 'error')})
+            record = result['record']
         elif op == 'lesson_confidence':
             confidence = d.get('confidence')
             if nb[i].cell_type != 'markdown' or nb[i].extra.get('lesson', {}).get('role') != 'prediction':
@@ -543,7 +537,7 @@ def connect(app, ctx):
         else: return fail(f'unknown op {op!r}')
         tab.dirty = tab.dirty or nb.dirty
         return {'ok': True, 'cells': [c.dict() for c in nb.cells], 'version': nb.version, 'clash': clash,
-                'index': at if op in ('undo', 'redo') else i, **({'record': record} if op == 'rupaka_inputs' else {})}
+                'index': at if op in ('undo', 'redo') else i, **({'record': record} if op in ('rupaka_inputs', 'rupaka_trial') else {})}
     def _vault_fail(e):
         if isinstance(e, ImportError) and (getattr(e, 'name', '') or '').startswith('abhyasa'): return fail('Saving cards needs abhyasa. Install abhyasa, then try again.')
         return fail(f'The learning vault is locked or unreadable. {errstr(e)}')
@@ -578,10 +572,17 @@ def connect(app, ctx):
         async with lesson_lock:
             tab, nb, _ = run_owner(d)
             if nb is None: return fail('Return to the lesson notebook, then try.')
-            if not isinstance(lesson := nb.meta.get('lesson'), dict) or not lesson.get('name'): return dict(ok=True, logged=False)
             cell = first(c for c in nb.cells if c.id == d.get('cell_id'))
             if cell is None: return fail('That cell is no longer in the notebook.')
             if d.get('src') != src_hash(cell.source): return fail('This demo changed. Run the cell again, then try.', 409)
+            if not isinstance(lesson := nb.meta.get('lesson'), dict) or not lesson.get('name'):
+                try: demo_gate(cell, d.get('demo'), d.get('gate'))
+                except ValueError as e: return fail(str(e))
+                picks = getattr(nb, '_rupaka_picks', {})
+                key = (cell.id, src_hash(cell.source))
+                picks.setdefault(key, {})[f"{d['demo']}:{d['gate']}"] = d.get('picked')
+                nb._rupaka_picks = picks
+                return dict(ok=True, logged=False)
             try: f = prediction_filing(nb, cell, tab.path, d.get('demo'), str(d.get('gate') or ''), d.get('picked'), d.get('why'), d.get('ans'), d.get('ok'))
             except ValueError as e: return fail(str(e))
             try: message = await off_loop(record_prediction, ctx.memory, f)

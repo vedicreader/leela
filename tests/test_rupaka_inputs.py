@@ -92,7 +92,8 @@ const spec = {id: 'demo', state: {a: 30}, blocks: []}, subs = [];
 const inner = {rupaka: {st: {a: 30, gate: {g: 'open', h: 'open'}}, on: fn => subs.push(fn)}};
 const cell = {id: 'c', source: 'source', cell_type: 'markdown', extra: {other: 1, rupaka: {demo: {v: 1, src: 'hash', rev: 4, inputs: {a: 60}}}}};
 const lee = {tabKey: 'tab', path: '/nb', mountedAt: 1, cells: [cell], nbQueue: Promise.resolve(), nbVersions: new Map()};
-const ctx = {lee, Map, JSON, console: {warn: () => actions.push('warn')},
+const ctx = {lee, Map, JSON, Error, rupaka: {keys: {slider: ['bind'], body: ['show', 'to']}}, console: {warn: () => actions.push('warn')},
+  api: async () => { throw new Error('manifests unavailable'); },
   srcHash: async s => s === 'changed' ? 'new-hash' : 'hash', mdSource: c => c.source,
   lessonRestore: () => async () => { actions.push('gates'); if (scenario === 'settled') inner.rupaka.st.gate.g = 'done'; },
   Rupaka: {set: (h, inputs) => { if (!Object.keys(inputs).length) return; actions.push(inputs); Object.assign(h.rupaka.st, inputs); [...subs].forEach(fn => fn()); }},
@@ -104,14 +105,22 @@ const paint = ctx.rupakaInputs(cell, 'source'), opts = paint.opts(spec);
 const flush = async () => {const jobs = [...timers.values()]; timers.clear(); jobs.forEach(fn => fn()); for (let i = 0; i < 12; i++) await Promise.resolve();};
 const record = rev => ({v: 1, src: 'hash', rev, inputs: {a: 45}});
 (async () => {
+  if (scenario === 'manifests-down') {
+    delete ctx.rupaka.keys;
+    await paint.restore(inner, spec);
+    assert.equal(inner.rupaka.st.a, 30);
+    assert.deepEqual(actions, ['warn']);
+    return;
+  }
   if (scenario === 'restore') {
     await paint.restore(inner, spec); assert.equal(actions[0], 'gates'); assert.equal(actions[1].a, 60);
     actions.length = 0; cell.extra.rupaka.demo.src = 'stale'; await paint.restore(inner, spec);
     assert.deepEqual(actions, ['gates']); assert.equal(requests.length, 0); return;
   }
-  if (['gated', 'nested', 'settled', 'revive'].includes(scenario)) {
+  if (['gated', 'nested', 'settled', 'revive', 'manifest'].includes(scenario)) {
     spec.blocks = [{type: 'slider', bind: 'a', lock: 'g'}];
     if (scenario === 'nested') spec.blocks = [{type: 'row', after: 'h', blocks: spec.blocks}];
+    if (scenario === 'manifest') spec.blocks = [{type: 'body', show: 'a', lock: 'g'}];
     const options = paint.opts(spec);
     await paint.restore(inner, spec);
     if (scenario === 'settled') { assert.equal(inner.rupaka.st.a, 60); return; }
@@ -168,10 +177,28 @@ const record = rev => ({v: 1, src: 'hash', rev, inputs: {a: 45}});
 })().catch(e => {console.error(e); process.exitCode = 1;});
 '''
 
-@pytest.mark.parametrize('scenario', ['restore', 'gated', 'nested', 'settled', 'revive', 'prose', 'prose-flight', 'fence', 'coalesce', 'conflict', 'tab', 'path', 'source', 'remount'])
+@pytest.mark.parametrize('scenario', ['restore', 'manifests-down', 'gated', 'manifest', 'nested', 'settled', 'revive', 'prose', 'prose-flight', 'fence', 'coalesce', 'conflict', 'tab', 'path', 'source', 'remount'])
 def test_inputs_client_contract(scenario):
     node = shutil.which('node')
     if not node: pytest.skip('node is not installed')
     path = Path(__file__).parents[1]/'leela'/'blocks'/'nb'/'cells.js'
     r = subprocess.run([node, '-e', CLIENT, str(path), scenario], capture_output=True, text=True, timeout=20)
     assert r.returncode == 0, r.stderr
+
+@pytest.mark.parametrize('prior', [False, True])
+def test_inputs_survive_structural_undo_redo(demo, prior):
+    client, path, body, _ = demo
+    if prior:
+        assert client.post('/nb/edit', json=body).status_code == 200
+        body = {**body, 'rev': 1, 'inputs': {'a': 75}}
+    assert client.post('/nb/edit', json=dict(op='insert', path=str(path), i=1)).status_code == 200
+    saved = client.post('/nb/edit', json=body)
+    assert saved.status_code == 200, saved.text
+    record = saved.json()['record']
+    for op, count in [('undo', 1), ('redo', 2)]:
+        r = client.post('/nb/edit', json=dict(op=op, path=str(path)))
+        assert r.status_code == 200, r.text
+        assert len(r.json()['cells']) == count
+        assert r.json()['cells'][0]['extra']['rupaka']['throw-angle'] == record
+        assert client.post('/nb/save', json={'path': str(path)}).status_code == 200
+        assert Notebook.load(path)[0].extra['rupaka']['throw-angle'] == record

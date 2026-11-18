@@ -35,9 +35,9 @@ async def _launch(pw, browser):
         return await pw.chromium.launch(headless=True, args=['--mute-audio'], **({'executable_path': CHROMIUM} if CHROMIUM else {}))
     except Exception as e: pytest.skip(f'no {browser} for playwright: {e}')
 
-async def _page(fn, root, browser='chromium'):
+async def _page(fn, root, browser='chromium', workspace=None):
     "Serve a workspace on `root` with a vault in it, open it in `browser`, and hand the page to `fn`."
-    ws = Workspace(roots=[str(root)], approvals='auto')
+    ws = workspace or Workspace(roots=[str(root)], approvals='auto')
     fake_model(ws)
     ws.memory = Memory(path=root/'vault.db', offline=True)
     port = _free_port(); srv = _serve(ws, port); await _started(srv)
@@ -227,3 +227,63 @@ def test_notebook_rupaka_prose_edit_keeps_host_and_saves_current_source(tmp_path
         assert response.request.post_data_json['src'] == src_hash(source)
         assert (await response.json())['record']['inputs']['a'] == 65
     asyncio.run(_page(go, tmp_path))
+
+
+def test_notebook_retained_trials_reload_and_show(tmp_path):
+    from rupaka.spec import gallery
+    from leela.blocks.nb.lesson import lesson_notebook
+    from leela.blocks.nb.nb import Notebook
+    spec = gallery()['throw-angle']
+    nb = lesson_notebook('Throw'); nb[1].source = fence(spec)
+    path = tmp_path/'trials.ipynb'; nb.save(path)
+    ws = Workspace(roots=[tmp_path], approvals='auto')
+    demo = '.lee-cell[data-i="1"] .lee-md-cell .lee-rupaka'
+    async def go(pg):
+        await _open(pg, path)
+        h = pg.locator(demo)
+        await h.locator('button.go').wait_for()
+        keep = h.get_by_role('button', name='Keep this run', exact=True)
+        await keep.wait_for(timeout=5000)
+        assert await keep.is_disabled()
+        await h.locator('.opts button', has_text='60').dispatch_event('click')
+        async with pg.expect_response('**/lesson/predict'): await h.locator('button.go').click()
+        await h.locator('p.verdict').wait_for()
+        for angle in (30, 60):
+            if angle == 60:
+                await h.locator('input[type=range]').first.evaluate("e => {e.value = '60'; e.dispatchEvent(new Event('input', {bubbles: true}));}")
+            async with pg.expect_response(lambda r: r.url.endswith('/nb/edit') and r.request.post_data_json.get('op') == 'rupaka_trial') as got:
+                await keep.click()
+            response = await got.value
+            assert response.status == 200, await response.text()
+        assert await pg.evaluate('saveTab(true)')
+        trials = Notebook.load(path)[1].extra['rupaka']['throw-angle']['trials']
+        assert [t['inputs']['a'] for t in trials] == [30, 60]
+        await pg.reload(wait_until='networkidle')
+        await pg.wait_for_function('window.lee && lee.keys.length')
+        if not await pg.locator(demo).count(): await _open(pg, path)
+        rows = h.locator('.lee-rupaka-trial')
+        await rows.nth(1).wait_for()
+        text = await rows.all_text_contents()
+        assert 'Run 1' in text[0] and '30' in text[0] and '35.3' in text[0], text
+        assert 'Run 2' in text[1] and '60' in text[1] and '35.3' in text[1], text
+        await rows.nth(0).get_by_role('button', name='Show run 1').click()
+        async with pg.expect_response(lambda r: r.url.endswith('/nb/edit') and r.request.post_data_json.get('op') == 'rupaka_inputs') as got:
+            await rows.nth(1).get_by_role('button', name='Show run 2').click()
+        assert (await got.value).status == 200
+        assert await h.locator('input[type=range]').first.input_value() == '60'
+        assert await pg.evaluate('saveTab(true)')
+        assert Notebook.load(path)[1].extra['rupaka']['throw-angle']['trials'] == trials
+        from leela.blocks.agent.ai import _session_tools
+        tools = {f.__name__: f for f in _session_tools(ws.inline_ai.host)}
+        rev = Notebook.load(path)[1].extra['rupaka']['throw-angle']['rev']
+        result = json.loads(await asyncio.to_thread(tools['set_demo_inputs'], str(path), nb[1].id, 'throw-angle', {'a': 75}, rev))
+        assert result['ok'], result
+        await pg.evaluate('p => mountTab(p)', str(path))
+        await pg.wait_for_function(f"(() => {{ const h = document.querySelector({demo!r}); return h?.shadowRoot?.querySelector('input[type=range]')?.value === '75'; }})()", timeout=5000)
+        async with pg.expect_response(lambda r: r.url.endswith('/nb/edit') and r.request.post_data_json.get('op') == 'rupaka_trial') as got:
+            await h.get_by_role('button', name='Keep this run', exact=True).click()
+        assert (await got.value).status == 200
+        await pg.evaluate('lee.nbQueue')
+        assert await pg.evaluate('saveTab(true)')
+        assert [t['inputs']['a'] for t in Notebook.load(path)[1].extra['rupaka']['throw-angle']['trials']] == [30, 60, 75]
+    asyncio.run(_page(go, tmp_path, workspace=ws))

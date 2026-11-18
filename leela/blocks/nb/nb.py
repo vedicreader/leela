@@ -415,6 +415,7 @@ class Notebook:
         dst.append(self._snapshot(snap['index']))
         del dst[:-MAX_UNDO]
         folds = {c.id: c.extra.get(COLLAPSED) for c in self.cells}
+        records = {c.id: deepcopy(c.extra['rupaka']) for c in self.cells if 'rupaka' in c.extra}
         # A run holds its own cell object and sets `running` on it, so undo keeps that object and puts back only what the step changed
         # in it: a copy would leave the run writing to a cell no longer in the notebook, and the page with a cell that does not look running.
         live = {c.id: c for c in self.cells if c.running}
@@ -426,6 +427,8 @@ class Notebook:
         self.cells, self.dirty, self.version = L(back), snap['dirty'], next(_VERSIONS)
         # A fold is view state, not a step, so undo leaves every surviving cell folded as it is now.
         for c in self.cells:
+            if c.id in records and c.extra.get('rupaka') != records[c.id]:
+                c.extra['rupaka'], self.dirty = records[c.id], True
             if c.id not in folds or bool(folds[c.id]) == bool(c.extra.get(COLLAPSED)): continue
             if folds[c.id]: c.extra[COLLAPSED] = True
             else: c.extra.pop(COLLAPSED)

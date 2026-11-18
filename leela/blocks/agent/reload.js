@@ -20,7 +20,7 @@ function whenEditorIdle(fn, key = '', tries = 40) {
   else waitingReloads.delete(key);
 }
 /* Agent tools that change an open notebook in the server's copy, not on disk, so the tab remounts from that copy. */
-const NOTEBOOK_TOOLS = new Set(['run_cell', 'check_exercise', 'grade_exercise', 'add_demo', 'add_exercise']);
+const NOTEBOOK_TOOLS = new Set(['run_cell', 'check_exercise', 'grade_exercise', 'add_demo', 'set_demo_inputs', 'add_exercise']);
 function scheduleAgentFileReload(path) {
   // An open notebook's agent edit is in the server's copy of the tab, with the person's unsaved edits, so a dirty tab remounts too.
   const held = () => lee.kind === 'notebook', dirty = () => $('.lee-tab.active')?.classList.contains('dirty');

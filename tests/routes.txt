@@ -268,6 +268,7 @@ GET,POST /nb/language
 GET,POST /nb/run
 GET,POST /nb/run/state
 GET,POST /nb/run/stream
+GET,POST /nb/rupaka/keys
 GET,POST /nb/save
 GET,POST /office/ql/{token}/{name}
 GET,POST /office/quicklook

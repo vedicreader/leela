@@ -37,7 +37,7 @@ BRIEFING_NOTES = 24_000   #: characters of pinned notes a briefing carries; a co
 SMALL_BRIEFING = 2000     #: …and what a small profile's briefing gives each of its extra blocks (state, notes)
 MAX_ATTRS = 20
 NEWS_WRITE_TOOLS = frozenset({'news_follow', 'news_unfollow', 'news_refresh'})
-WRITE_TOOLS = HARNESS_WRITE_TOOLS | ASK_TOOLS | NEWS_WRITE_TOOLS | frozenset({'run_cell', 'check_exercise', 'add_demo', 'add_exercise', 'generate_video'})   # grade_exercise only adds a note under the learner's checks, so it does not ask
+WRITE_TOOLS = HARNESS_WRITE_TOOLS | ASK_TOOLS | NEWS_WRITE_TOOLS | frozenset({'run_cell', 'check_exercise', 'set_demo_inputs', 'add_demo', 'add_exercise', 'generate_video'})   # grade_exercise only adds a note under the learner's checks, so it does not ask
 PATH_ACTIONS, URL_ACTIONS = ('path', 'folder'), ('url', 'harvest', 'crawl')   #: vishalakshi watch actions that read a local path, or a page
 GUARDED_DIRS = ('.git', '.venv', '.leela')   #: a write under one asks even in `edits`: hooks, interpreters and settings run code
 SAFE_VERBS = ('GET', 'HEAD')
@@ -1079,6 +1079,29 @@ def _session_tools(host):
                 if index is None: return f'no cell {after_cell_id!r} in {path}; call notebook_cells for the ids'
             return host.nb_add_cell(str(p), fence(spec), index=index, cell_type='markdown')
         except Exception as e: return f'add_demo failed: {errstr(e)}'
+    @summary(lambda a: f'Set demo inputs in {a.get("path", "")}')
+    def set_demo_inputs(path: str, cell_id: str, demo: str, inputs: dict, rev: int) -> str:
+        "Set inputs of an open demo at rev. Returns JSON or a conflict."
+        from ..nb.lesson import rupaka_picks, rupaka_edit
+        from ..nb.nb import src_hash
+        try:
+            p = host.check_write(path)
+            tab, nb, _ = host._held(p)
+            if nb is None: return json.dumps(dict(ok=False, error='Open this notebook before changing its demo.', status=400))
+            async def change():
+                cell = first(c for c in nb.cells if c.id == cell_id)
+                if cell is None: return dict(ok=False, error='That cell is no longer in the notebook.', status=409)
+                src = src_hash(cell.source)
+                picks = await asyncio.to_thread(rupaka_picks, host.ws.memory, nb, cell)
+                if host._held(p)[1] is not nb or cell not in nb.cells:
+                    return dict(ok=False, error='That notebook or cell is no longer open.', status=409)
+                result, status = rupaka_edit(nb, cell, dict(op='rupaka_inputs', demo=demo, inputs=inputs, rev=rev, src=src), picks, followup=True)
+                if status == 200: tab.dirty = True
+                return dict(result, status=status)
+            loop = host._loop()
+            result = asyncio.run_coroutine_threadsafe(change(), loop).result(30) if loop else asyncio.run(change())
+            return json.dumps(result)
+        except Exception as e: return json.dumps(dict(ok=False, error=errstr(e), status=400))
     @summary(lambda a: f'Add exercise to {a.get("path", "")}')
     def add_exercise(path: str, task: str, fname: str, stub: str, tests: list | str, solution: str,
                      after_cell_id: str = '', uses: list | None = None, packages: list | None = None) -> str:
@@ -1137,7 +1160,7 @@ def _session_tools(host):
         """
         try: return clip(host.nb_grade_exercise(path, cell_id, score, note))
         except Exception as e: return f'grade_exercise failed: {errstr(e)}'
-    return [small_tool(run_cell), small_tool(add_demo), small_tool(add_exercise), small_tool(check_exercise), small_tool(grade_exercise)]   # the Run button belongs to a small session too
+    return [small_tool(run_cell), small_tool(add_demo), small_tool(set_demo_inputs), small_tool(add_exercise), small_tool(check_exercise), small_tool(grade_exercise)]   # the Run button belongs to a small session too
 
 def _stat_sig(p):
     try: s = Path(p).stat(); return s.st_mtime_ns, s.st_size

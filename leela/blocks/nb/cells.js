@@ -385,54 +385,72 @@ function rupakaInputs(c, source) {
   const entry = spec => {
     const key = JSON.stringify([tab, path, c.id, spec.id, spec]), kept = rupakaWrites.get(key);
     if (kept) { kept.source = source; return kept; }
-    const e = {source, deferred: {}};
+    const e = {source, deferred: {}, rev: c.extra?.rupaka?.[spec.id]?.rev};
     const current = () => lee.tabKey === tab && lee.path === path && lee.cells.find(x => x.id === c.id && x.cell_type === 'markdown' && mdSource(x) === e.source);
     let pending = null, timer = null, flight = false;
     const send = () => {
       timer = null;
       if (flight) return;
-      if (!current()) { pending = null; return; }
+      if (!current()) { pending = null; e.op = null; e.error = new Error('Return to this demo before keeping a run.'); return; }
       const inputs = pending; if (!inputs) return;
+      const op = e.op || 'rupaka_inputs'; e.op = null; e.error = null; e.accepted = false;
       pending = null; flight = true;
       const mounted = lee.mountedAt, here = () => lee.mountedAt === mounted && current();
       const run = lee.nbQueue.then(async () => {
         await headingSynced(tab);
-        const cell = here(); if (!cell) return;
-        const source = mdSource(cell), src = await srcHash(source);
-        if (!here() || mdSource(cell) !== source) return;
+        const cell = here(); if (!cell) { e.error = new Error('This demo is no longer active.'); return; }
+        const source = mdSource(cell), src = await srcHash(source); e.src = src;
+        if (!here() || mdSource(cell) !== source) { e.error = new Error('This demo source changed.'); return; }
         const rev = cell.extra?.rupaka?.[spec.id]?.rev ?? 0;
         const sources = changedRows(tab, lee.cells, nextSeq());
         try {
-          const r = await post('/nb/edit', {op: 'rupaka_inputs', path: tab, id: c.id, i: lee.cells.indexOf(cell), demo: spec.id, src, rev, inputs, sources});
-          const live = here(); if (!live) return;
+          const r = await post('/nb/edit', {op, path: tab, id: c.id, i: lee.cells.indexOf(cell), demo: spec.id, src, rev, inputs, sources});
+          const live = here(); if (!live) { e.error = new Error('This demo is no longer active.'); return; }
+          e.accepted = op === 'rupaka_trial';
           live.extra = {...live.extra, rupaka: {...live.extra?.rupaka, [spec.id]: r.record}};
           noteSeen(tab, r.cells.filter(x => !(r.clash || []).includes(x.id)));
           lee.nbVersions.set(tab, Math.max(r.version, lee.nbVersions.get(tab) || 0));
-          markDirty();
-        } catch (e) {
+          e.rev = r.record.rev; markDirty(); e.paint?.();
+        } catch (err) {
+          e.error = err;
           const live = here(); if (!live) return;
-          if (e.body?.kind === 'rupaka_conflict') {
-            live.extra = {...live.extra, rupaka: {...live.extra?.rupaka, [spec.id]: e.body.record}};
+          if (err.body?.kind === 'rupaka_conflict') {
+            live.extra = {...live.extra, rupaka: {...live.extra?.rupaka, [spec.id]: err.body.record}};
           }
-          console.warn('Leela demo inputs save:', e);
+          console.warn('Leela demo inputs save:', err);
         }
-      }).catch(e => { if (here()) console.warn('Leela demo inputs save:', e); }).finally(() => {
+      }).catch(err => { e.error = err; if (here()) console.warn('Leela demo inputs save:', err); }).finally(() => {
         flight = false;
         if (pending && !timer) timer = setTimeout(send, 400);
       });
       lee.nbQueue = run;
     };
-    e.options = {save: inputs => { if (!current()) return; pending = {...inputs, ...e.deferred}; clearTimeout(timer); timer = setTimeout(send, 400); }};
+    e.options = {save: inputs => { if (!current() || e.disabled) return; pending = {...inputs, ...e.deferred}; clearTimeout(timer); timer = setTimeout(send, 400); }};
+    e.flush = async () => { do { clearTimeout(timer); send(); await lee.nbQueue; } while (pending || flight); };
+    e.keep = async inputs => { await e.flush(); pending = inputs; e.op = 'rupaka_trial'; send(); await lee.nbQueue; if (e.error || !e.accepted) throw e.error || new Error('Run was not kept. Try again.'); };
     rupakaWrites.set(key, e);
     return e;
   };
-  const opts = spec => typeof spec.id === 'string' && spec.id ? entry(spec).options : undefined;
+  const opts = spec => {
+    if (typeof spec.id !== 'string' || !spec.id) return;
+    const e = entry(spec), rev = c.extra?.rupaka?.[spec.id]?.rev;
+    if (e.rev !== rev) { e.rev = rev; if (e.inner) restore(e.inner, spec); }
+    return e.options;
+  };
   const restore = async (inner, spec) => {
     const e = entry(spec);
+    e.inner = inner;
+    try { if (!rupaka.keys) rupaka.keys = await api('/nb/rupaka/keys'); e.disabled = false; }
+    catch (err) {
+      e.disabled = true; console.warn('Leela demo manifests:', err);
+      if (typeof document !== 'undefined') inner.after(Object.assign(document.createElement('p'), {role: 'status', textContent: 'Demo inputs were not restored. Reload to retry.'}));
+      return;
+    }
     let inputs = {};
     e.deferred = {};
     try {
       const src = await srcHash(source), cell = lee.tabKey === tab && lee.path === path && lee.cells.find(x => x.id === c.id && mdSource(x) === source);
+      e.src = src;
       const record = cell?.extra?.rupaka?.[spec.id];
       if (record?.v === 1 && record.src === src && record.inputs && !Array.isArray(record.inputs) && typeof record.inputs === 'object') inputs = record.inputs;
     } catch (e) { console.warn('Leela demo inputs restore:', e); }
@@ -440,7 +458,7 @@ function rupakaInputs(c, source) {
     const locks = {}, defaults = spec.state || {};
     const walk = (blocks, parents = []) => (blocks || []).forEach(b => {
       const gates = [...parents, b.lock, b.after].filter(Boolean);
-      for (const k of [b.bind, b.to, b.x, b.y, b.angle]) if (typeof k === 'string' && Object.hasOwn(defaults, k) && gates.length) {
+      for (const k of (rupaka.keys[b.type] || []).map(p => b[p])) if (typeof k === 'string' && Object.hasOwn(defaults, k) && gates.length) {
         const held = locks[k] ||= new Set(); gates.forEach(g => held.add(g));
       }
       walk(b.blocks, gates);
@@ -457,10 +475,57 @@ function rupakaInputs(c, source) {
         if (Object.keys(ready).length) Rupaka.set(inner, ready);
       };
       inner.rupaka.on(release); release();
+      if (inner.leeTrials) { inner.rupaka.on(inner.leeTrials); inner.leeTrials(); }
     };
     inner.leeInputs();
+    if (inner.leeTrials) inner.leeTrials();
+    else if (typeof document !== 'undefined') rupakaTrials(inner, spec, e, () => lee.tabKey === tab && lee.path === path && lee.cells.find(x => x.id === c.id));
   };
   return {restore, opts};
+}
+function rupakaTrials(inner, spec, entry, current) {
+  const strip = document.createElement('div'), rows = document.createElement('div'), note = document.createElement('p'), keep = document.createElement('button');
+  let busy = false;
+  strip.className = 'lee-rupaka-trials'; strip.setAttribute('aria-label', 'Retained runs');
+  keep.type = 'button'; keep.textContent = 'Keep this run'; note.setAttribute('role', 'status');
+  strip.append(keep, rows, note); inner.after(strip);
+  const open = () => Object.values(inner.rupaka.st.gate).some(v => v !== 'done');
+  const paint = () => {
+    keep.disabled = busy || open(); rows.replaceChildren();
+    const record = current()?.extra?.rupaka?.[spec.id];
+    for (const trial of record?.trials || []) {
+      const row = document.createElement('div'), show = document.createElement('button'), text = document.createElement('span');
+      row.className = 'lee-rupaka-trial'; text.textContent = `Run ${trial.n}`;
+      if (!open() && trial.src === entry.src) {
+        const copy = document.createElement('div');
+        Rupaka.mount(copy, {...spec, blocks: [], askable: false}); Rupaka.set(copy, trial.inputs);
+        const keys = new Map(), walk = (blocks, hidden = false) => (blocks || []).forEach(b => {
+          const held = hidden || [b.lock, b.after].filter(Boolean).some(g => inner.rupaka.st.gate[g] !== 'done');
+          if (!held && ['readout', 'caption'].includes(b.type)) for (const m of (b.text || '').matchAll(/\{([\w.]+)(?::(\d+))?\}([ \t]*[A-Za-z°%]+)?/g)) keys.set(m[1], [m[2], m[3] || '']);
+          walk(b.blocks, held);
+        });
+        walk(spec.blocks);
+        const values = [...keys].map(([key, [digits, unit]]) => {
+          const v = copy.rupaka.get(key), label = key === 'a' ? 'angle' : key;
+          return `${label} ${typeof v === 'number' ? +v.toFixed(digits == null ? 4 : +digits) : String(v ?? '')}${unit}`;
+        });
+        text.textContent += values.length ? ': ' + values.join(' · ') : '';
+      }
+      show.type = 'button'; show.textContent = 'Show'; show.setAttribute('aria-label', `Show run ${trial.n}`);
+      show.disabled = open() || trial.src !== entry.src;
+      show.onclick = () => { if (open() || !current()) return; Rupaka.set(inner, trial.inputs); entry.options.save(Rupaka.state(inner)); };
+      row.append(text, show); rows.append(row);
+    }
+  };
+  keep.onclick = async () => {
+    if (busy || open() || !current()) return;
+    busy = true; keep.disabled = true; note.textContent = 'Keeping run…';
+    try { await entry.keep(Rupaka.state(inner)); note.textContent = 'Run kept.'; }
+    catch (e) { note.textContent = e.body?.error || e.message || 'Run was not kept. Try again.'; }
+    busy = false; paint();
+  };
+  entry.paint = inner.leeTrials = paint;
+  inner.rupaka.on(paint); paint();
 }
 const mdPaint = (c, cached = true) => (el, src) => {
   if (c) mdAttached(c)(el);
