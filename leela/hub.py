@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio, hashlib, json, re, threading, time, weakref
+import asyncio, hashlib, json, re, secrets, threading, time, weakref
+from http.cookies import CookieError, SimpleCookie
 from urllib.parse import parse_qs, urlsplit
 from dataclasses import dataclass
 from pathlib import Path
@@ -291,7 +292,9 @@ def sibling_site(headers) -> bool:
 
 class LoopbackHostGuard:
     "Reject DNS-rebinding and forwarded Host headers before they reach executable routes."
-    def __init__(self, app): self.app = app
+    def __init__(self, app):
+        self.app = app
+        self._learn_returns, self._learn_lock = {}, threading.Lock()
     async def __call__(self, scope, receive, send):
         headers = _headers(scope)
         host = _host(headers)
@@ -302,13 +305,43 @@ class LoopbackHostGuard:
         # a page with `Referrer-Policy: no-referrer` posts to itself with `Origin: null`
         origin_ok = not origin or origin_host in LOOPBACK or origin_host.endswith('.localhost') or (origin == 'null' and site == 'same-origin')
         # `same-site` is a page on another local port: 127.0.0.1:3000 and 127.0.0.1:5001 are one site
-        browser_ok = site in ('', 'same-origin', 'none') or learn_navigation(scope, headers) or (site == 'same-site' and sibling_site(headers))
+        # Only our own /learn redirect grants the following same-site IDE navigation.
+        # A blanket GET / exception would let unrelated local pages navigate the IDE.
+        returning = False
+        authority = headers.get(b'host', b'').decode().lower()
+        if (allowed and origin_ok and site == 'same-site' and scope.get('type') == 'http'
+                and scope.get('method') == 'GET' and scope.get('path') == '/'
+                and headers.get(b'sec-fetch-mode', b'').lower() == b'navigate'
+                and headers.get(b'sec-fetch-dest', b'').lower() == b'document'):
+            cookie = SimpleCookie()
+            try: cookie.load(headers.get(b'cookie', b'').decode())
+            except CookieError: pass
+            if token := cookie.get('leela_learn_return'):
+                with self._learn_lock:
+                    grant = self._learn_returns.pop(token.value, None)
+                returning = bool(grant and grant[0] == authority and grant[1] > time.monotonic())
+        browser_ok = site in ('', 'same-origin', 'none') or learn_navigation(scope, headers) or returning or (site == 'same-site' and sibling_site(headers))
         if not (allowed and origin_ok and browser_ok): return await _refuse(scope, send, 'invalid Host header')
         # as abhyasa's `LocalOnly`: a change, or a socket, from a page on another port is another site's
         changes = scope.get('type') == 'websocket' or scope.get('method', 'GET') not in SAFE_METHODS
         if changes and origin and origin != 'null' and urlsplit(origin).netloc.lower() != headers.get(b'host', b'').decode().lower():
             return await _refuse(scope, send, 'Leela does not take changes from another page.', 403)
-        await self.app(scope, receive, send)
+        async def redirect_send(message):
+            if message['type'] == 'http.response.start' and message['status'] == 303:
+                location = dict(message.get('headers', ())).get(b'location', b'').decode()
+                target = urlsplit(location)
+                if target.path == '/' and not target.scheme and not target.netloc:
+                    now, token = time.monotonic(), secrets.token_urlsafe(24)
+                    with self._learn_lock:
+                        self._learn_returns = {k: v for k, v in self._learn_returns.items() if v[1] > now}
+                        # Bound outstanding grants even if a client never follows its redirect.
+                        if len(self._learn_returns) >= 128: self._learn_returns.pop(next(iter(self._learn_returns)))
+                        self._learn_returns[token] = (authority, now + 30)
+                    message = {**message, 'headers': [*message.get('headers', ()),
+                        (b'set-cookie', f'leela_learn_return={token}; Max-Age=30; Path=/; HttpOnly; SameSite=Strict'.encode())]}
+            await send(message)
+        handoff = site == 'same-site' and scope.get('type') == 'http' and learn_navigation(scope, headers)
+        await self.app(scope, receive, redirect_send if handoff else send)
 
 class WorkspaceHub:
     "ASGI dispatcher for isolated workspace applications: the default one on the main port, each other one on a loopback port of its own."
