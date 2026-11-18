@@ -600,6 +600,8 @@ class Workspace:
         loose = self.fs.loose is not None and (a := Path(path).expanduser()).is_absolute() and not self.fs.covers(a.resolve()) and not self.fs.read_only(a)
         if loose: self.fs.admit(a)
         p = self.fs._check(path, must_exist=True, reading=True)
+        from .blocks.nb.lesson import workspace_help
+        workspace_help(self, kind='reveal', pending_only=True)
         if loose:
             from .core.projects import workspace_for
             from .hub import declined
@@ -774,6 +776,8 @@ class Workspace:
     def ask_cell(self, nb, cell):
         "Answer the prompt `cell` (a Cell, or its index), with the notebook above it as its context."
         c, i = self._asked(nb, cell)
+        from .blocks.nb.lesson import workspace_help
+        workspace_help(self, nb)
         a = self.inline_ai
         png, screen, _ = self.take_screen()
         self._approval_target = target = (nb, c)
@@ -916,6 +920,8 @@ class Workspace:
         return AttrDict(ok=True, kind=None, why=why, local=local, attachments=[], refs=[])
     def _grounding(self, attachments, context, ai=None, context_path=''):
         "`(context, screen, media)` for one prompt-bar turn: pending capture plus @-selected files, each as the vault lets it go to `ai`'s model."
+        from .blocks.nb.lesson import workspace_help
+        workspace_help(self)
         spec = (ai or self.ai).model
         if context and context_path: context = self.screen_path(context_path, context, spec)
         attached, media = self._attachment_context(attachments, spec)
@@ -944,6 +950,8 @@ class Workspace:
     def ask_cell_stream(self, nb, cell):
         "Answer the prompt `cell` (a Cell, or its index), filling it in as the answer arrives."
         c, i = self._asked(nb, cell)
+        from .blocks.nb.lesson import workspace_help
+        workspace_help(self, nb)
         a = self.inline_ai
         png, screen, _ = self.take_screen()
         c.reply, c.calls, c.usage, c.outputs = '', [], {}, []

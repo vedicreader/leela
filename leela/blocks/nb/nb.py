@@ -326,6 +326,10 @@ class Notebook:
                 if not moved(m, b): sets.append((m, 'source', t.source)); sets.append((m, 'cell_type', t.cell_type))
                 elif (m.source, m.cell_type) != (t.source, t.cell_type): clash.append(t)
             if _js(t.extra) != b[2] and _js(m.extra) == b[2]: sets.append((m, 'extra', t.extra))
+            elif _js(t.extra) != b[2] and _js(m.extra) != b[2]:
+                before = json.loads(b[2]).get('rupaka')
+                if t.extra.get('rupaka') != before and m.extra.get('rupaka') != before and t.extra.get('rupaka') != m.extra.get('rupaka'):
+                    if t not in clash: clash.append(t)
             if m.outputs is b[3] and (m.outputs, m.execution_count) != (t.outputs, t.execution_count):
                 sets += [(m, 'outputs', t.outputs), (m, 'execution_count', t.execution_count)]
         for k, b in was.items():

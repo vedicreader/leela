@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio, base64, json, queue, threading
+import asyncio, base64, json, queue, threading, uuid
 
 from fasthtml.common import StreamingResponse
 from fastcore.all import first
@@ -19,7 +19,7 @@ from ..agent.turns import activity_changes, edit_diffs, tool_schemas
 from ..debug.debug import notebook_state_ui, paused_kernel
 from ..tabs.app import disk_version as _disk_version
 from .nb import Cell, Notebook, OutFeed, RunningCellError, capped, cell_extras, inline_values, restore_exercise, run_watched, src_hash, take_seq
-from .lesson import demo_gate, rupaka_picks, rupaka_edit, rupaka_keys, GUIDE_NEEDS, GUIDE_STREAM_NEEDS, EnvGone, check_anchors, check_demo, filed_picks, guide_board, lock, prediction_filing, record_card, record_prediction
+from .lesson import mark_assistance, prediction_explanation, grade_explanation, transfer_spec, record_transfer, demo_gate, rupaka_picks, rupaka_edit, rupaka_keys, GUIDE_NEEDS, GUIDE_STREAM_NEEDS, EnvGone, check_anchors, check_demo, filed_picks, guide_board, lock, prediction_filing, record_card, record_prediction
 from .exercise import JUDGE, Refused, check_cell, exercise_meta, public_verdict
 from . import presentation
 
@@ -95,7 +95,7 @@ def connect(app, ctx):
     docs, run_locks = store.docs, store.run_locks
     buffers, buffer_bases, doc_versions = store.buffers, store.bases, store.versions
     running_cells = ctx.running.cells
-    lesson_lock = asyncio.Lock()
+    lesson_lock, lesson_boot = asyncio.Lock(), uuid.uuid4().hex
     def run_owner(d): return store.owner(d.get('path'))
     def by_id(nb, d):
         "Turn `id`, `ids` and `target_id` ('' for the end) into the positions they name now; a message when one has gone."
@@ -569,6 +569,7 @@ def connect(app, ctx):
     @rt('/lesson/predict', methods=['POST'])
     async def lesson_predict(req):
         if (d := await json_obj(req)) is None: return fail(NOT_OBJECT)
+        if (owner := store.tab_for(d.get('path'))) and owner.path and ctx.fs.read_only(owner.path): return fail('This notebook is read-only. Evidence was not saved.', 403)
         async with lesson_lock:
             tab, nb, _ = run_owner(d)
             if nb is None: return fail('Return to the lesson notebook, then try.')
@@ -583,11 +584,73 @@ def connect(app, ctx):
                 picks.setdefault(key, {})[f"{d['demo']}:{d['gate']}"] = d.get('picked')
                 nb._rupaka_picks = picks
                 return dict(ok=True, logged=False)
-            try: f = prediction_filing(nb, cell, tab.path, d.get('demo'), str(d.get('gate') or ''), d.get('picked'), d.get('why'), d.get('ans'), d.get('ok'))
+            try: f = prediction_filing(nb, cell, tab.path, d.get('demo'), str(d.get('gate') or ''), d.get('picked'), d.get('why'), d.get('ans'), d.get('ok'),
+                                       d.get('evidence_id', ''), d.get('inputs'), d.get('assistance'))
             except ValueError as e: return fail(str(e))
             try: message = await off_loop(record_prediction, ctx.memory, f)
+            except ValueError as e: return fail(str(e), 409)
             except Exception as e: return _vault_fail(e)
-            return dict(ok=True, logged=True, message=message) if message else dict(ok=True, logged=False)
+            reply = dict(ok=True, logged=True, message=message) if message else dict(ok=True, logged=False)
+            if d.get('evidence_id'):
+                reply['explanation'] = await off_loop(prediction_explanation, ctx.memory, nb, cell, d.get('gate'), d.get('demo'))
+            return reply
+    @rt('/lesson/explanation', methods=['POST'])
+    async def lesson_explanation(req):
+        if (d := await json_obj(req)) is None: return fail(NOT_OBJECT)
+        if (owner := store.tab_for(d.get('path'))) and owner.path and ctx.fs.read_only(owner.path): return fail('This notebook is read-only. Evidence was not saved.', 403)
+        async with lesson_lock:
+            _, nb, _ = run_owner(d)
+            if nb is None: return fail('Return to the lesson notebook, then try.')
+            cell = first(c for c in nb.cells if c.id == d.get('cell_id'))
+            if cell is None or d.get('src') != src_hash(cell.source): return fail('This demo changed. Run the cell again, then try.', 409)
+            a = await off_loop(prediction_explanation, ctx.memory, nb, cell, d.get('gate'), d.get('demo'))
+            if a is None: return fail('No explanation was filed for this question.')
+        try: return dict(ok=True, **await off_loop(grade_explanation, ctx.memory, a['id']))
+        except Exception: return dict(ok=True, status='pending')
+    @rt('/lesson/assist', methods=['POST'])
+    async def lesson_assist(req):
+        if (d := await json_obj(req)) is None: return fail(NOT_OBJECT)
+        if (owner := store.tab_for(d.get('path'))) and owner.path and ctx.fs.read_only(owner.path): return fail('This notebook is read-only. Evidence was not saved.', 403)
+        async with lesson_lock:
+            _, nb, _ = run_owner(d)
+            if nb is None: return fail('Return to the lesson notebook, then try.')
+            if d.get('kind') not in ('hint', 'tutor', 'demo', 'reveal'): return fail('Unknown assistance kind.')
+            mark_assistance(nb, d['kind'])
+            return await nb_save(req)
+    @rt('/lesson/transfer', methods=['POST'])
+    async def lesson_transfer(req):
+        if (d := await json_obj(req)) is None: return fail(NOT_OBJECT)
+        if (owner := store.tab_for(d.get('path'))) and owner.path and ctx.fs.read_only(owner.path): return fail('This notebook is read-only. Evidence was not saved.', 403)
+        async with lesson_lock:
+            tab, nb, _ = run_owner(d)
+            if nb is None: return fail('Return to the lesson notebook, then try.')
+            cell = first(c for c in nb.cells if c.id == d.get('cell_id'))
+            if cell is None or d.get('src') != src_hash(cell.source): return fail('This demo changed. Run the cell again, then try.', 409)
+            if not isinstance(nb.meta.get('lesson'), dict) or not nb.meta['lesson'].get('name'): return fail('This is not a lesson notebook.')
+            record = (cell.extra.get('rupaka') or {}).get(d.get('demo')) or {}
+            if d.get('demo') != 'throw-angle' or record.get('src') != d['src'] or not record.get('trials'): return fail('Lock in and keep a run before trying a new case.')
+            picks = await off_loop(filed_picks, ctx.memory, nb, cell)
+            if 'throw-angle:g' not in picks: return fail('Lock in and keep a run before trying a new case.')
+            transfer = record.get('transfer')
+            if not transfer or transfer.get('src') != d['src']:
+                transfer = record['transfer'] = dict(id=uuid.uuid4().hex, boot=lesson_boot, src=d['src'], inputs=dict(record['inputs']), assistance=[])
+                nb.dirty = tab.dirty = True
+            if transfer.get('boot') != lesson_boot: mark_assistance(nb, 'reveal', cell)
+            if 'picked' not in d:
+                saved = await nb_save(req)
+                if not isinstance(saved, dict) or not saved.get('ok'): return saved
+                return dict(ok=True, transfer_id=transfer['id'], spec=transfer_spec())
+            if d.get('transfer_id') != transfer['id']: return fail('This question changed. Open it again.', 409)
+            if str(d['picked']) not in ('40', '70', '80'): return fail('Choose one of the offered angles.')
+            if isinstance(helped := d.get('assistance'), list):
+                transfer['assistance'] = sorted(set([*transfer.get('assistance', []), *[k for k in helped if k in ('hint', 'tutor', 'demo', 'reveal')]]))
+            try: result = await off_loop(record_transfer, ctx.memory, nb, cell, tab.path, d['demo'], transfer, d['picked'])
+            except ValueError as e: return fail(str(e), 409)
+            except Exception as e: return _vault_fail(e)
+            transfer['filed'] = True
+            nb.dirty = tab.dirty = True
+            saved = await nb_save(req)
+            return result if isinstance(saved, dict) and saved.get('ok') else saved
     @rt('/lesson/predictions', methods=['POST'])
     async def lesson_predictions(req):
         "The picks filed for the demos of one lesson cell at its source now. No `lesson_lock`: a guide stream holds it through a model call."
@@ -598,7 +661,15 @@ def connect(app, ctx):
         cell = first(c for c in nb.cells if c.id == d.get('cell_id'))
         if cell is None: return fail('That cell is no longer in the notebook.')
         if d.get('src') != src_hash(cell.source): return dict(ok=True, picks={})
-        try: return dict(ok=True, picks=await off_loop(filed_picks, ctx.memory, nb, cell))
+        if not ctx.fs.read_only(d.get('path') or nb.path) and any(isinstance(r, dict) and r.get('transfer') for r in (cell.extra.get('rupaka') or {}).values()):
+            mark_assistance(nb, 'reveal', cell)
+        try:
+            picks = await off_loop(filed_picks, ctx.memory, nb, cell)
+            explanations = {}
+            for key in picks:
+                demo, gate = key.rsplit(':', 1)
+                if a := await off_loop(prediction_explanation, ctx.memory, nb, cell, gate, demo): explanations[key] = a
+            return dict(ok=True, picks=picks, **(dict(explanations=explanations) if explanations else {}))
         except Exception as e: return _vault_fail(e)
     def guide_said(d):
         "`(said, anchors, demo)` of the guide request `d`, or its fail reply."
@@ -636,6 +707,7 @@ def connect(app, ctx):
         except BaseException: lesson_lock.release(); raise
         if not isinstance(g, tuple): lesson_lock.release(); return g
         tab, nb, cell = g
+        if not ctx.fs.read_only(tab.path): mark_assistance(nb, 'tutor')
         if sh := guide_show(nb, said):
             lesson_lock.release()
             return StreamingResponse(iter([sse('show', dict(show=sh))]), media_type='text/event-stream', headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'})
@@ -668,6 +740,7 @@ def connect(app, ctx):
         async with lesson_lock:
             if not isinstance(g := guide_cell(d), tuple): return g
             tab, nb, cell = g
+            if not ctx.fs.read_only(tab.path): mark_assistance(nb, 'tutor')
             if sh := guide_show(nb, said): return dict(ok=True, show=sh)
             notes = []
             try: board = await off_loop(guide_board, ctx.memory, nb, cell, tab.path, said, notes.append, anchors, demo)

@@ -64,25 +64,191 @@ function renderLessonReveal(c) {
   $('#out-' + c.id, cell).after(el);
   lessonRevealActions(c, el);
 }
-//: A gate locked in a notebook cell's demo goes to the server, which files it only in a lesson. The server checks a literal answer itself and files the page's `ans` and `ok` for a state-path answer. The gate reveals once the server answers ok. A failure opens the gate again with the server's message.
+//: A gate locked in a notebook cell's demo goes to the server, which files it only in a lesson, with the inputs the demo had at lock-in, the help asked for, and one evidence id for every try of this question. The gate reveals once the server answers `ok: true` for the tab and source it was locked in. Any other answer opens the gate again with the server's message. A new case (`leeTransfer`) is answered by `lessonTransferAnswer`, never here.
 async function lessonPredict(e) {
   const at = e.composedPath(), host = at.find(n => n.classList?.contains('lee-rupaka')), cell = at.find(n => n.matches?.('.lee-cell[data-id]'));
   if (!cell || host?.leeSource == null) return;
   // rupaka 0.0.1 has no settle, and its gate reveals on lock-in.
   const held = typeof e.detail?.settle === 'function', settle = held ? e.detail.settle : () => {};
   if (held) e.preventDefault();
+  const moved = at.find(n => n.leeTransfer);
+  if (moved) return lessonTransferAnswer(e, moved.leeTransfer, host, settle, held);
+  const path = lee.path, tab = lee.tabKey, source = host.leeSource, id = cell.dataset.id;
+  const frozen = typeof lessonFreeze === 'function' ? lessonFreeze(at, path, id) : {};
+  const same = () => lee.tabKey === tab && lee.path === path && host.leeSource === source;
   try {
-    const {demo, gate, picked, ans, ok, why} = e.detail, path = lee.path;
-    const src = await srcHash(host.leeSource);
+    const {demo, gate, picked, ans, ok, why} = e.detail;
+    const src = await srcHash(source);
     await lee.nbQueue;
-    const d = await post('/lesson/predict', {path, cell_id: cell.dataset.id, demo, gate, picked, ans, ok, why, src});
+    const body = {path, cell_id: id, demo, gate, picked, ans, ok, why, src, ...(typeof lessonEvidence === 'function' && lessonEvidence(frozen, path, id, src, demo, gate))};
+    const d = await post('/lesson/predict', body);
+    if (d?.ok !== true) throw Object.assign(new Error(d?.error || d?.message || 'The save was refused.'), {body: d});
+    if (!same()) return settle(false, LESSON_LATE);
     settle(true);
     status(d.message || '', 'ok');   // an ok answer also clears the toast of a failed try
+    if (d.explanation && typeof lessonExplain === 'function') lessonExplain(host, d.explanation, body, same);
   } catch (err) {
     const said = lessonSaid(err);
     settle(false, said);
-    status(said, 'err');
+    if (same()) {
+      if (typeof lessonRetry === 'function') lessonRetry(at, e.detail);
+      status(said, 'err');
+    }
   }
+}
+function lessonRetry(at, detail) {
+  const inner = at.find(n => n.rupaka), q = inner?.querySelector?.(`[id="rk-${CSS.escape(detail.demo || 'd')}-${CSS.escape(detail.gate)}-q"]`);
+  const button = q?.parentElement?.querySelector('button.go');
+  if (button) button.textContent = 'Retry';
+}
+const LESSON_LATE = 'This demo changed while saving. Try again.';
+const lessonIds = new Map(), lessonHelped = new Map(), lessonActive = new Map(), TRANSFER_DEMOS = ['throw-angle'];
+const lessonKey = (path, id) => `${path}\0${id}`;
+//: A v4 UUID. `crypto.randomUUID` is missing on plain http at a LAN address, so it falls back to `getRandomValues`, then to `Math.random`.
+function lessonUuid() {
+  const c = globalThis.crypto;
+  try { if (typeof c?.randomUUID === 'function') return c.randomUUID(); } catch {}
+  const b = new Uint8Array(16);
+  if (typeof c?.getRandomValues === 'function') c.getRandomValues(b); else for (let i = 0; i < 16; i++) b[i] = Math.floor(Math.random() * 256);
+  b[6] = b[6] & 15 | 64; b[8] = b[8] & 63 | 128;
+  const h = [...b].map(x => x.toString(16).padStart(2, '0')).join('');
+  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+}
+//: The evidence id of one question: kept in `sessionStorage` under notebook, cell, source hash, demo and gate, so a retry or a reload files once. With no storage it lives in `lessonIds` for the page.
+function lessonEvidenceId(path, id, src, demo, gate) {
+  const key = 'lee-evidence:' + JSON.stringify([path, id, src, demo, gate]);
+  try { const kept = globalThis.sessionStorage?.getItem(key); if (kept) return kept; } catch {}
+  const made = lessonIds.get(key) || lessonUuid(); lessonIds.set(key, made);
+  try { globalThis.sessionStorage?.setItem(key, made); } catch {}
+  return made;
+}
+//: The inputs of the demo at lock-in, a copy, and the help asked for on this cell. Taken before the first `await`.
+function lessonFreeze(at, path, id) {
+  const inner = at.find(n => n.rupaka);
+  let inputs;
+  try { if (inner && typeof globalThis.Rupaka?.state === 'function') inputs = JSON.parse(JSON.stringify(Rupaka.state(inner))); }
+  catch (err) { console.warn('Leela demo inputs snapshot:', err); }
+  return {inputs, assistance: [...(lessonHelped.get(lessonKey(path, id)) || [])]};
+}
+const lessonEvidence = (frozen, path, id, src, demo, gate) => ({evidence_id: lessonEvidenceId(path, id, src, demo, gate), inputs: frozen.inputs, assistance: frozen.assistance});
+//: Under the demo: 'Explanation: not graded yet' with Retry grading until `/lesson/explanation` answers `ok: true`, then 'Explanation: graded'. A grading failure never reaches the prediction.
+function lessonExplain(host, ex, body, same) {
+  const root = host.shadowRoot; if (!root) return;
+  let row = host.leeExplain;
+  if (!row) {
+    row = host.leeExplain = document.createElement('div'); row.className = 'lee-rupaka-explain';
+    const label = document.createElement('span'), again = document.createElement('button');
+    label.setAttribute('role', 'status'); again.type = 'button'; again.textContent = 'Retry grading';
+    row.style.display = 'flex'; row.style.gap = '0.5em'; row.style.alignItems = 'center';
+    row.append(label, again);
+    const inner = [...root.children].find(n => n.rupaka);
+    if (inner) inner.after(row); else root.append(row);
+    if (host.leeHeld) { host.leeHeld.push({el: row, display: ''}); row.style.display = 'none'; }
+  }
+  const [text, retry] = row.children;
+  const show = (said, again) => { text.textContent = said; retry.hidden = !again; retry.disabled = false; };
+  if (ex.status === 'graded') return show('Explanation: graded', false);
+  const grade = async () => {
+    retry.disabled = true;
+    try {
+      const d = await post('/lesson/explanation', body);
+      if (d?.ok !== true) throw new Error('The explanation was not graded.');
+      const graded = !d.status || d.status === 'graded';
+      if (same()) show(graded ? 'Explanation: graded' : 'Explanation: not graded yet', !graded);
+    } catch (err) { console.warn('Leela explanation:', err); if (same()) show('Explanation: not graded yet', true); }
+  };
+  retry.onclick = grade;
+  show('Explanation: not graded yet', true);
+  return grade();
+}
+//: `kind` of help on cell `id` goes to the server, which marks the cell's open new case aided.
+async function lessonAssist(path, id, kind) {
+  await lee.nbQueue;
+  const d = await post('/lesson/assist', {path, cell_id: id, kind});
+  if (d?.ok !== true) throw Object.assign(new Error(d?.error || 'The help was not noted.'), {body: d});
+  return d;
+}
+//: Help on a cell: kept for its predictions, and, while a new case is open on it, kept for the case and sent to the server.
+function lessonHelp(id, kind) {
+  const key = lessonKey(lee.path, id), kinds = lessonHelped.get(key) || new Set();
+  kinds.add(kind); lessonHelped.set(key, kinds);
+  const t = lessonActive.get(key);
+  if (!t || t.done || t.tab !== lee.tabKey) return;
+  t.help.add(kind);
+  lessonAssist(t.path, id, kind).catch(err => console.warn('Leela assist:', err));
+}
+function lessonTransferShow(t) {
+  const root = t.host.shadowRoot;
+  t.host.leeHeld = [...root.children].filter(n => n !== t.box && n.tagName !== 'STYLE').map(el => ({el, display: el.style.display}));
+  for (const h of t.host.leeHeld) h.el.style.display = 'none';
+  t.box.style.display = '';
+}
+function lessonTransferHide(t) {
+  for (const {el, display} of t.host.leeHeld || []) el.style.display = display;
+  t.host.leeHeld = null; t.box.style.display = 'none';
+}
+//: The new case of `spec` in the host's shadow root, with its own question and 'Return to demo', which asks the server to mark the case aided before the demo shows again.
+function lessonTransferMount(host, base, spec) {
+  const box = document.createElement('div'), q = document.createElement('div'), note = document.createElement('p'), back = document.createElement('button');
+  box.className = 'lee-rupaka-transfer'; note.setAttribute('role', 'status'); back.type = 'button'; back.textContent = 'Return to demo';
+  box.append(q, note, back); host.shadowRoot.append(box);
+  try { Rupaka.mount(q, spec); } catch (err) { box.remove(); throw err; }
+  const t = {...base, host, box, q, note, back, help: new Set(), done: false};
+  q.leeTransfer = t; lessonActive.set(base.key, t);
+  back.onclick = async () => {
+    if (back.disabled) return;
+    back.disabled = true;
+    try {
+      if (!t.done) { await lessonAssist(t.path, t.cell, 'reveal'); t.help.add('reveal'); }
+      lessonTransferHide(t);
+    } catch (err) { note.textContent = lessonSaid(err); }
+    back.disabled = false;
+  };
+  return t;
+}
+//: The answer to a new case: held until `/lesson/transfer` acknowledges it, and never sent to `/lesson/predict`. A failure opens the gate again; the same `transfer_id` makes a retry safe.
+async function lessonTransferAnswer(e, t, host, settle, held) {
+  if (!held) return;
+  try {
+    await lee.nbQueue;
+    const d = await post('/lesson/transfer', {path: t.path, cell_id: t.cell, demo: t.demo, src: t.src, transfer_id: t.id, picked: e.detail.picked, assistance: [...t.help]});
+    if (d?.ok !== true) throw Object.assign(new Error(d?.error || d?.message || 'The answer was refused.'), {body: d});
+    if (lee.tabKey !== t.tab || lee.path !== t.path || host.leeSource !== t.source) return settle(false, LESSON_LATE);
+    settle(true); t.done = true; t.note.textContent = d.message || '';
+    status(d.message || '', 'ok');
+  } catch (err) {
+    const said = lessonSaid(err);
+    settle(false, said); lessonRetry(e.composedPath(), e.detail); status(said, 'err');
+  }
+}
+//: 'Try a new case' for the trials strip: `{button, paint(ready)}`, or null outside a lesson, for a demo with no new case, or with a rupaka that cannot hold a gate. `paint(true)` once a run is kept and every gate is done. The button opens the case the server makes, or the one still open.
+function lessonTransferOffer(inner, spec, entry, current) {
+  if (!TRANSFER_DEMOS.includes(spec.id) || !lessonNotebook() || typeof globalThis.Rupaka?.settle !== 'function') return null;
+  const button = document.createElement('button');
+  let busy = false, ready = false;
+  button.type = 'button'; button.textContent = 'Try a new case'; button.disabled = true;
+  const paint = now => { ready = now; button.disabled = busy || !ready; };
+  button.onclick = async () => {
+    const host = inner.getRootNode?.().host, c = current();
+    if (busy || !ready || !c || host?.leeSource == null) return;
+    busy = true; button.disabled = true;
+    const path = lee.path, tab = lee.tabKey, source = host.leeSource, key = lessonKey(path, c.id);
+    try {
+      await lee.nbQueue;
+      const src = await srcHash(source);
+      let t = lessonActive.get(key);
+      if (t && (t.done || t.host !== host || t.src !== src || t.tab !== tab)) { lessonTransferHide(t); t.box.remove(); lessonActive.delete(key); t = null; }
+      if (!t) {
+        const d = await post('/lesson/transfer', {path, cell_id: c.id, demo: spec.id, src});
+        if (d?.ok !== true || !d.transfer_id || !d.spec) throw Object.assign(new Error(d?.error || 'No new case.'), {body: d});
+        if (lee.tabKey !== tab || lee.path !== path || host.leeSource !== source || !current()) return;
+        t = lessonTransferMount(host, {id: d.transfer_id, key, path, tab, cell: c.id, demo: spec.id, src, source}, d.spec);
+      }
+      lessonTransferShow(t);
+    } catch (err) { status(err.body?.error || 'Leela could not open a new case. Try again.', 'err'); }
+    finally { busy = false; button.disabled = !ready; }
+  };
+  return {button, paint};
 }
 //: The `restore` of a lesson cell's demo: each gate with a prediction filed for source `src` is closed with its pick, so a reload shows what it hid. Null outside a lesson; after 2s, a tab change or a failure the gates stay open.
 function lessonRestore(id, src) {
@@ -94,6 +260,10 @@ function lessonRestore(id, src) {
       if (!d?.picks || lee.tabKey !== tab) return;
       const at = `${spec.id}:`, picks = Object.fromEntries(Object.entries(d.picks).filter(([k]) => k.startsWith(at)).map(([k, v]) => [k.slice(at.length), v]));
       rupakaSettle(inner, picks);
+      for (const [key, ex] of Object.entries(d.explanations || {})) if (key.startsWith(at)) {
+        const host = inner.getRootNode?.().host;
+        if (host) lessonExplain(host, ex, {path, cell_id: id, src: await srcHash(src), demo: spec.id, gate: key.slice(at.length)}, () => lee.tabKey === tab && host.leeSource === src);
+      }
     } catch (e) { console.warn('Leela demo restore:', e); }
   };
 }
@@ -114,6 +284,7 @@ function lessonAsk(e) {
   if (prompt.value.trim()) return status('Send or clear your message to the agent first.', 'err');
   e.preventDefault();
   prompt.value = `About cell ${n} of ${lee.path ? lee.path.split('/').pop() : 'this notebook'}${about ? `, ${about}` : ''}: ${d.text || 'What does this demo show?'}`;
+  lessonHelp(c.id, 'tutor');
   return sendAgent();
 }
 // The Node harnesses load this file with no `document`.
@@ -208,6 +379,7 @@ globalThis.document?.addEventListener('board:stop', e => { if (e.detail?.by === 
 async function lessonGuide(id, picked = String(globalThis.getSelection?.() ?? '').trim(), asked = null) {
   const said = asked ?? await inputDialog('screen guide', 'ask', GUIDE_START + picked.replace(/\s+/g, ' '));
   if (!said) return;
+  lessonHelp(id, 'tutor');
   const path = lee.path, tabKey = lee.tabKey, find = () => lee.tabKey === tabKey && $(`.lee-cell[data-id="${CSS.escape(id)}"]`);
   guideAsk.ctl?.abort();
   const n = ++guideAsk.n, ctl = guideAsk.ctl = new AbortController(), mine = () => n === guideAsk.n;

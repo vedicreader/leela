@@ -58,7 +58,7 @@ def post(r, i=1, gate='g1', demo='halves', src=None, path=None, **kw):
     return r.c.post('/lesson/predict', json=body)
 
 def shelf(r): return Learning(r.ws.memory._store('learning'))
-def attempts(r, slug='halves'): return list(shelf(r).attempts(slug, limit=10000))
+def attempts(r, slug='halves'): return [a for a in shelf(r).attempts(slug, limit=10000) if a.kind != 'explanation']
 
 def test_predict_ok_is_server_side_and_once(rig):
     r = post(rig, picked=2, why='', ok=True, ans=2)            # the page says right; 2 is wrong
@@ -213,7 +213,9 @@ def test_predict_state_path_answer_files_the_page_values(serve):
     r = serve(lesson(fence(spec(gate=dict(GATE, answer='half')))))
     assert post(r, picked=6, ans=6, ok=True, why='Half of 12.').json()['logged']
     a = attempts(r)[0]
-    assert (bool(a.correct), a.answer, a.expected, a.thinking) == (True, '6', '6', 'Half of 12.')
+    assert (bool(a.correct), a.answer, a.expected, a.thinking) == (True, '6', '6', '')
+    reason = next(a for a in shelf(r).attempts('halves') if a.kind == 'explanation')
+    assert reason.of == a.id and reason.thinking == 'Half of 12.'
 
 @pytest.mark.parametrize('kw', [{}, dict(ans=4), dict(ans=4, ok='true'), dict(ans=4, ok=1), dict(ans=[4], ok=True), dict(ans={'is': 4}, ok=False)])
 def test_predict_state_path_refuses_a_bad_verdict(serve, kw):

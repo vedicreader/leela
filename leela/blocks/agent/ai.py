@@ -645,6 +645,9 @@ class WorkspaceHost(CodeHost, NotebookHost, WebHost, BrowserHost, MemoryHost, Wa
         from ..nb.nb import Cell, Notebook
         p = self.check(path)
         def add(nb, seqs=None):
+            if cell_type == 'markdown' and 'rupaka' in source:
+                from ..nb.lesson import mark_assistance
+                mark_assistance(nb, 'demo')
             c = nb.insert(len(nb) if index < 0 else int(index), Cell(source=source, cell_type=cell_type))
             if len(nb) == 2 and not nb[0].source.strip() and nb[1] is c: nb.delete(0)
             nb.reveal(first(j for j, x in enumerate(nb.cells) if x is c))   # the fold lives in the file, so unfold it there

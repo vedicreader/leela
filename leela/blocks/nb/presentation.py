@@ -228,6 +228,8 @@ def connect(app, ctx):
         d, no = await _body(req)
         if no: return no
         if isinstance(s := check_start(d, fs), str): return _no(s)
+        from .lesson import workspace_help
+        workspace_help(ws, kind='reveal')
         pres.n += 1; n, key, ak, pid = pres.n, secrets.token_hex(16), secrets.token_hex(16), secrets.token_hex(8)
         try: p, r, imgs = await off_loop(_build, s, ak, fs, ws.project_root)
         except ValueError as e: return _no(str(e))

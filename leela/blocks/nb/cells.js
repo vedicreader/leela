@@ -485,10 +485,11 @@ function rupakaInputs(c, source) {
 }
 function rupakaTrials(inner, spec, entry, current) {
   const strip = document.createElement('div'), rows = document.createElement('div'), note = document.createElement('p'), keep = document.createElement('button');
+  const more = typeof lessonTransferOffer === 'function' ? lessonTransferOffer(inner, spec, entry, current) : null;
   let busy = false;
   strip.className = 'lee-rupaka-trials'; strip.setAttribute('aria-label', 'Retained runs');
   keep.type = 'button'; keep.textContent = 'Keep this run'; note.setAttribute('role', 'status');
-  strip.append(keep, rows, note); inner.after(strip);
+  strip.append(keep, ...(more ? [more.button] : []), rows, note); inner.after(strip);
   const open = () => Object.values(inner.rupaka.st.gate).some(v => v !== 'done');
   const paint = () => {
     keep.disabled = busy || open(); rows.replaceChildren();
@@ -516,6 +517,7 @@ function rupakaTrials(inner, spec, entry, current) {
       show.onclick = () => { if (open() || !current()) return; Rupaka.set(inner, trial.inputs); entry.options.save(Rupaka.state(inner)); };
       row.append(text, show); rows.append(row);
     }
+    more?.paint(!busy && !open() && (record?.trials || []).some(t => t.src === entry.src));
   };
   keep.onclick = async () => {
     if (busy || open() || !current()) return;

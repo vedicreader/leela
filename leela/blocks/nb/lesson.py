@@ -397,6 +397,8 @@ def rupaka_edit(nb, cell, d, picks=None, followup=False):
             return False
         if blocked(spec.get('blocks')): return no('That input is behind an open gate. Lock in first.')
         inputs = {**spec['state'], **((record or {}).get('inputs', {}) if (record or {}).get('src') == d['src'] else {}), **inputs}
+    if followup: mark_assistance(nb, 'demo')
+    elif (record or {}).get('transfer') and inputs != record.get('inputs'): mark_assistance(nb, 'demo', cell)
     record = {**(record or {}), 'v': 1, 'src': d['src'], 'rev': rev + 1, 'inputs': deepcopy(inputs)}
     if trial:
         trials = record.get('trials', [])
@@ -413,15 +415,23 @@ def demo_gate(cell, demo, gate):
     if len(hits) > 1: raise ValueError(f'This cell has more than one gate {gate!r}. Give each gate its own id.')
     return hits[0]
 
-def prediction_filing(nb, cell, path, demo, gate, picked, why='', ans=None, ok=None):
+def prediction_filing(nb, cell, path, demo, gate, picked, why='', ans=None, ok=None, evidence_id='', inputs=None, assistance=None):
     "What `record_prediction` files for one gate, copied now; ValueError for a bad gate, or for a state-path gate without a valid `ans` and `ok`."
     spec, g = demo_gate(cell, demo, gate)
     if not spec.get('id'): raise ValueError('This demo has no id. Give it one, then try.')
     if isinstance(a := g.get('answer'), dict): ans, ok = a.get('is'), js_str(picked) == js_str(a.get('is'))
     elif type(ok) is not bool: raise ValueError('This check needs ok as true or false.')
     elif ans is not None and not isinstance(ans, (str, int, float)): raise ValueError('This check needs ans as one value: a string, a number, true, false or null.')
-    return dict(name=nb.meta['lesson']['name'], spec=spec, gate=gate, picked=js_str(picked), ans=js_str(ans), ok=ok, why=str(why or ''),
-                notebook=str(path or ''), card_key=f'{cell.id}:{src_hash(cell.source)}:{spec["id"]}:{gate}', walk=walk_meta(nb))
+    if not isinstance(evidence_id, str) or len(evidence_id) > 200: raise ValueError('Invalid prediction identity.')
+    state = spec.get('state') or {}
+    record = (cell.extra.get('rupaka') or {}).get(demo) or {}
+    accepted = record.get('inputs', {}) if record.get('src') == src_hash(cell.source) else {}
+    if inputs is not None and (not isinstance(inputs, dict) or inputs.keys() - state.keys()): raise ValueError('Unknown prediction inputs.')
+    if assistance is not None and (not isinstance(assistance, list) or not all(isinstance(x, str) for x in assistance)): raise ValueError('Invalid assistance status.')
+    return deepcopy(dict(name=nb.meta['lesson']['name'], spec=spec, gate=gate, picked=js_str(picked), ans=js_str(ans), ok=ok, why=str(why or ''),
+                notebook=str(path or ''), card_key=f'{cell.id}:{src_hash(cell.source)}:{spec["id"]}:{gate}', walk=walk_meta(nb),
+                evidence_id=evidence_id, source_hash=src_hash(cell.source), inputs={**state, **accepted, **(inputs or {})},
+                assistance=sorted(set([*(assistance or []), *record.get('assistance', [])]))))
 
 def record_prediction(memory, f):
     "File one rupaka prediction through abhyasa once per source version; None when its key is already filed."
@@ -434,11 +444,94 @@ def record_prediction(memory, f):
     with _open_lock(memory.path):
         lr = Learning(vault)
         with write_txn(lr.v.db):
-            if any(x.get('card_key') == f['card_key'] for x in lr.attempts(slug, limit=10000)): return None
+            rows = lr.attempts(slug, limit=10000)
+            if f['evidence_id'] and any(x.get('evidence_id') == f['evidence_id'] and x.get('card_key') != f['card_key'] for x in rows):
+                raise ValueError('This prediction identity belongs to another question version.')
+            if prior := first(x for x in rows if x.get('card_key') == f['card_key']):
+                if f['evidence_id'] and prior.get('evidence_id') == f['evidence_id'] and prior.answer != f['picked']:
+                    raise ValueError('This prediction was already filed with another answer. Reload to see the saved answer.')
+                return None
             if lr.concept(slug) is None: lr.put(f['name'], slug=slug)
             d = lr.put_demo(f['spec'], slug, by='leela:lesson')
-            lr.record_prediction(d.slug, f['gate'], f['picked'], f['ans'], f['ok'], f['why'], notebook=f['notebook'], card_key=f['card_key'], **_rest(f.get('walk', {})))
+            meta = {k: f[k] for k in ('evidence_id', 'source_hash', 'inputs', 'assistance')}
+            a = lr.record_prediction(d.slug, f['gate'], f['picked'], f['ans'], f['ok'], '',
+                                     notebook=f['notebook'], card_key=f['card_key'], **meta, **_rest(f.get('walk', {})))
+            if f['why'].strip(): lr.record_explanation(a.id, f['why'], notebook=f['notebook'], source_hash=f['source_hash'], inputs=f['inputs'], assistance=f['assistance'])
             return _saved(lr.concept(slug))
+
+def grade_explanation(memory, aid, ask=None):
+    from abhyasa.learner import Learning
+    from abhyasa.show import grade_why
+    from litesearch.core import write_txn
+    from ..memory.memory import _open_lock
+    vault = memory._store('learning')
+    with _open_lock(memory.path): context = Learning(vault).explanation_context(aid)
+    if context.status == 'graded': return dict(status='graded')
+    if ask is None:
+        from abhyasa.models import Router, route_ask
+        ask = Router(route_ask())
+    g = grade_why(ask, context.concept, context.question, context.picked, context.ans, context.why)
+    with _open_lock(memory.path):
+        lr = Learning(vault)
+        with write_txn(lr.v.db): a = lr.apply_explanation_grade(aid, g)
+    return dict(status=a.grade_status, feedback=a.get('feedback', ''))
+
+def prediction_explanation(memory, nb, cell, gate, demo):
+    from abhyasa.learner import Learning
+    from ..memory.memory import _open_lock
+    vault = memory._store('learning')
+    key = f'{cell.id}:{src_hash(cell.source)}:{demo}:{gate}'
+    with _open_lock(memory.path):
+        rows = Learning(vault).attempts(_slug(nb.meta['lesson']['name'], walk_meta(nb)), limit=10000)
+        p = first(a for a in rows if a.get('card_key') == key)
+        a = p and first(a for a in rows if a.get('of') == p.id and a.kind == 'explanation')
+        return dict(id=a.id, status=a.grade_status) if a else None
+
+def transfer_spec():
+    return dict(rupaka=1, id='throw-angle-transfer', title='Try a new case without the trajectory', askable=False, state={}, blocks=[
+        dict(type='caption', text='Level ground, no air resistance, the same launch speed.'),
+        dict(type='gate', id='transfer', prompt='At the same speed, which other angle lands as far as 20 degrees?', options=[40, 70, 80], answer={'is': 70})])
+
+def record_transfer(memory, nb, cell, path, demo, transfer, picked):
+    from abhyasa.learner import Learning
+    from litesearch.core import write_txn
+    from ..memory.memory import _open_lock
+    vault = memory._store('learning')
+    with _open_lock(memory.path):
+        lr = Learning(vault)
+        with write_txn(lr.v.db):
+            slug = _slug(nb.meta['lesson']['name'], walk_meta(nb))
+            prior = first(a for a in lr.attempts(slug, limit=10000) if a.kind == 'transfer' and a.get('evidence_id') == transfer['id'])
+            if prior and prior.answer != js_str(picked): raise ValueError('This transfer answer was already filed. The first answer is kept.')
+            a = lr.record_transfer(slug, transfer_spec()['blocks'][1]['prompt'], js_str(picked), '70', js_str(picked) == '70',
+                aided=bool(transfer.get('assistance')), evidence_id=transfer['id'], notebook=str(path), source_hash=transfer['src'],
+                inputs=transfer['inputs'], assistance=transfer.get('assistance', []), origin_demo=demo, **_rest(walk_meta(nb)))
+            return dict(ok=True, aided=a.aided, correct=bool(a.correct), message='Saved as aided.' if a.aided else 'Saved as unaided.')
+
+def workspace_help(ws, nb=None, kind='tutor', pending_only=False):
+    docs = getattr(ws, 'docstore', None)
+    if docs is None: return
+    for path, held in list(docs.docs.items()):
+        if nb is not None and held is not nb: continue
+        if not isinstance(held.meta.get('lesson'), dict) or ws.fs.read_only(path): continue
+        if pending_only and not any(isinstance(r, dict) and r.get('transfer') and not r['transfer'].get('filed')
+            for c in held.cells for r in (c.extra.get('rupaka') or {}).values()): continue
+        mark_assistance(held, kind)
+
+def mark_assistance(nb, kind, cell=None):
+    for c in [cell] if cell else nb.cells:
+        records = c.extra.get('rupaka', {})
+        if not isinstance(records, dict): continue
+        for spec in _specs(c):
+            if spec.get('id') and spec['id'] not in records:
+                records[spec['id']] = dict(v=1, rev=0, src=src_hash(c.source), inputs=deepcopy(spec.get('state') or {}))
+        if records: c.extra['rupaka'] = records
+        for r in records.values():
+            if not isinstance(r, dict) or r.get('v') != 1: continue
+            r['assistance'] = sorted(set([*r.get('assistance', []), kind]))
+            if t := r.get('transfer'):
+                t['assistance'] = sorted(set([*t.get('assistance', []), kind]))
+        nb.dirty = True
 
 def filed_picks(memory, nb, cell) -> dict:
     "`{'demo:gate': pick}` for each gate of `cell` with a prediction filed at its source now: `String` of the pick, or None for a gate whose answer is a state path."

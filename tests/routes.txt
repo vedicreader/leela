@@ -446,9 +446,12 @@ POST /learn/env
 POST /learn/open
 POST /learn/scratch
 POST /learn/tool
+POST /lesson/assist
+POST /lesson/explanation
 POST /lesson/new
 POST /lesson/predict
 POST /lesson/predictions
+POST /lesson/transfer
 POST /media/open
 POST /nb/guide
 POST /nb/guide/stream
