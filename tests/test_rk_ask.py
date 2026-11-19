@@ -51,6 +51,6 @@ def test_present_mode_and_the_audience_window_mount_with_no_ask_control():
     present, slides, core = [(ROOT/p).read_text() for p in ('blocks/nb/present.js', 'blocks/nb/slides.js', 'static/js/core.js')]
     assert 'rupakaDraw(spec, null, null, null, {askable: false})' in present
     assert 'window.Rupaka.mount(inner, spec, {askable: false})' in slides
-    assert 'Rupaka.mount(e.inner, e.spec, e.opts)' in core and 'window.Rupaka.mount(inner, spec, opts)' in core
+    assert 'rupakaMount(e.inner, e.spec, e.opts)' in core and 'rupakaMount(inner, spec, opts)' in core and 'window.Rupaka.mount(el, spec, opts)' in core   # rupakaMount adds the media base
     built = (ROOT/'static'/'lee-core.js').read_text()
     assert "addEventListener('rk-ask', lessonAsk)" in built and '{askable: false}' in built

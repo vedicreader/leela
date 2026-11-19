@@ -1,9 +1,12 @@
-import asyncio, time
+import asyncio, re, time
 from pathlib import Path
 from fastcore.basics import first
 from fasthtml.common import FtResponse, JSONResponse, P, RedirectResponse
+from rupaka.spec import MEDIA_EXTS
+from starlette.responses import FileResponse, Response
+from starlette.routing import Route
 from ... import errstr
-from ...core.web import NOT_OBJECT, fail, json_obj, off_loop
+from ...core.web import MEDIA_URL, NOT_OBJECT, fail, json_obj, off_loop
 from ..memory.memory import _open_lock
 from .ui import DocPage, FolderPage, LookupPage, OpenedPage, Page, StepPage
 
@@ -27,6 +30,19 @@ def due_cards(memory):
 
 HEADERS = {'Content-Security-Policy': "frame-ancestors 'self'; img-src 'self' data:", 'Referrer-Policy': 'same-origin'}
 PANE_ONLY = 'The side pane shows only Learn pages.'
+
+DEMO_MEDIA = 'demo-media'   # decision 28: the store of demo media in the vault's asset folder, which abhyasa's `put_demo` fills
+#: the media type of each file type in rupaka's MEDIA_EXTS, as abhyasa's demo block gives it: `mimetypes` differs by platform (macOS says audio/x-wav)
+MEDIA_TYPES = dict(mp3='audio/mpeg', m4a='audio/mp4', ogg='audio/ogg', wav='audio/wav', webm='video/webm', mp4='video/mp4', jpg='image/jpeg', jpeg='image/jpeg', png='image/png', webp='image/webp')
+MEDIA_NAME = re.compile(r'[0-9a-f]{64}\.(%s)' % '|'.join(sorted({x for xs in MEDIA_EXTS.values() for x in xs})))
+MEDIA_HEADERS = {'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "default-src 'none'"}
+
+def media_file(memory, name):
+    "The path and media type of the demo media `name`, `<sha256>.<ext>`, in the learning vault's store; None for any other name, or a file outside the store."
+    if not (m := MEDIA_NAME.fullmatch(name)): return None
+    store = memory._store('learning').assets(DEMO_MEDIA).resolve()
+    p = (store/name).resolve()
+    return (p, MEDIA_TYPES[m[1]]) if p.parent == store and p.is_file() else None
 
 def read_step(memory, q):
     from abhyasa.learner import Learning
@@ -119,6 +135,12 @@ def connect(app, ctx):
         p = req.url.path
         if req.query_params.get('pane') == '1' and p != '/learn' and not p.startswith('/learn/'): return said(req, ctx.session.project_root, PANE_ONLY, 403)
     app.before.append(pane_only)
+    async def demo_media(req):
+        "A recorded sound, clip or picture of a demo, from the store in the vault; 404 for any other name."
+        if (f := await off_loop(media_file, ctx.memory, req.path_params['name'])) is None: return Response('', status_code=404)
+        return FileResponse(f[0], media_type=f[1], headers=MEDIA_HEADERS)
+    # first in the table: FastHTML's `/{fname:path}.{ext:static}` route answers every `.wav` or `.png` path it reaches
+    app.router.routes.insert(0, Route(MEDIA_URL + '{name}', demo_media, methods=['GET']))
     @app.route('/lesson/due')
     async def lesson_due():
         try: return JSONResponse(await off_loop(due_cards, ctx.memory))

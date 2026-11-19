@@ -5,6 +5,7 @@ GET /leeboard/board.css
 GET /leeboard/board.js
 GET /leeboard/texparts.js
 GET /leefonts/hand.css
+GET /leemedia/{name}
 GET /leestatic/three.js
 GET /present/audience
 GET /present/deck

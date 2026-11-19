@@ -499,7 +499,7 @@ function rupakaTrials(inner, spec, entry, current) {
       row.className = 'lee-rupaka-trial'; text.textContent = `Run ${trial.n}`;
       if (!open() && trial.src === entry.src) {
         const copy = document.createElement('div');
-        Rupaka.mount(copy, {...spec, blocks: [], askable: false}); Rupaka.set(copy, trial.inputs);
+        rupakaMount(copy, {...spec, blocks: [], askable: false}); Rupaka.set(copy, trial.inputs);
         const keys = new Map(), walk = (blocks, hidden = false) => (blocks || []).forEach(b => {
           const held = hidden || [b.lock, b.after].filter(Boolean).some(g => inner.rupaka.st.gate[g] !== 'done');
           if (!held && ['readout', 'caption'].includes(b.type)) for (const m of (b.text || '').matchAll(/\{([\w.]+)(?::(\d+))?\}([ \t]*[A-Za-z°%]+)?/g)) keys.set(m[1], [m[2], m[3] || '']);

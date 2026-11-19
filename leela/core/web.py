@@ -61,6 +61,7 @@ def hand_routes():
             Mount(HAND_URL.rstrip('/'), StaticFiles(directory=str(assets().fonts), check_dir=False))]
 
 BOARD_URL = '/leeboard/'   # the screen guide's board, from Leela's own rupaka (`rupaka.board`)
+MEDIA_URL = '/leemedia/'   # the media base of each demo Leela draws: the vault's demo media (`blocks/learn/app.py`), named in core.js and slides.js
 
 def board_url(name) -> str:
     "The URL of the board file `name` (`board.js`, `board.css`, `texparts.js`), which changes with rupaka's version; `libs/` for the folder of the pens."

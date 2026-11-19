@@ -105,6 +105,7 @@ function slidesMount(spec) {
   const css = document.querySelector('meta[name="lee-rupaka-css"]')?.content;
   if (css) root.append(Object.assign(document.createElement('link'), {rel: 'stylesheet', href: css}));
   root.append(inner); slidesRk(root, true);
+  inner.dataset.rkMedia = '/leemedia/';   // RUPAKA_MEDIA of core.js, which the audience page, loading this file alone, does not have
   try { window.Rupaka.mount(inner, spec, {askable: false}); slidesWhy(inner); } catch (e) { inner.textContent = `This demo could not be drawn: ${e.message || e}`; }
   return {host, inner};
 }

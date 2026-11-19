@@ -192,7 +192,7 @@ function lessonTransferMount(host, base, spec) {
   const box = document.createElement('div'), q = document.createElement('div'), note = document.createElement('p'), back = document.createElement('button');
   box.className = 'lee-rupaka-transfer'; note.setAttribute('role', 'status'); back.type = 'button'; back.textContent = 'Return to demo';
   box.append(q, note, back); host.shadowRoot.append(box);
-  try { Rupaka.mount(q, spec); } catch (err) { box.remove(); throw err; }
+  try { rupakaMount(q, spec); } catch (err) { box.remove(); throw err; }
   const t = {...base, host, box, q, note, back, help: new Set(), done: false};
   q.leeTransfer = t; lessonActive.set(base.key, t);
   back.onclick = async () => {

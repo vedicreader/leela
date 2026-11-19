@@ -31,7 +31,8 @@ function make(store = new Map(), storage = true) {
     lee: {path: '/n.ipynb', tabKey: 'tab', nbQueue: Promise.resolve(), cells: [{id: 'c1', cell_type: 'markdown', extra: {lesson: {}}}]},
     srcHash: async s => 'h:' + s, status: (t, k) => ctx.said.push([k, t]), $: sel => sel === '#agentprompt' ? ctx.prompt : null, $$: () => [],
     leeAct() {}, sendAgent() { ctx.calls.push('agent'); },
-    Rupaka: {state: h => JSON.parse(JSON.stringify(h.rupaka.inputs)), mount: (el, spec) => { el.rupaka = {inputs: {}, st: {gate: {}}}; ctx.mounts.push(spec); }, settle: () => true}});
+    Rupaka: {state: h => JSON.parse(JSON.stringify(h.rupaka.inputs)), mount: (el, spec) => { el.rupaka = {inputs: {}, st: {gate: {}}}; ctx.mounts.push(spec); }, settle: () => true},
+    rupakaMount: (el, spec, opts) => ctx.Rupaka.mount(el, spec, opts)});   // core.js's, which this file runs without
   ctx.sessionStorage = storage ? {getItem: k => store.has(k) ? store.get(k) : null, setItem: (k, v) => { store.set(k, v); }}
     : {getItem() { throw new Error('denied'); }, setItem() { throw new Error('denied'); }};
   ctx.post = async (url, body) => {
@@ -199,7 +200,8 @@ class El {
   setAttribute(k, v) { this.attrs[k] = v; }
 }
 const src = fs.readFileSync(file, 'utf8'), code = src.slice(src.indexOf('function rupakaTrials'), src.indexOf('const mdPaint'));
-const ready = [], ctx = {document: {createElement: t => new El(t)}, console: {warn() {}}, Rupaka: {mount(el) { el.rupaka = {get: () => 1}; }, set() {}, state: () => ({})}};
+const ready = [], ctx = {document: {createElement: t => new El(t)}, console: {warn() {}}, Rupaka: {mount(el) { el.rupaka = {get: () => 1}; }, set() {}, state: () => ({})},
+  rupakaMount: (el, spec, opts) => ctx.Rupaka.mount(el, spec, opts)};   // core.js's, which this slice runs without
 const button = new El('button');
 if (scenario === 'offer') ctx.lessonTransferOffer = (...a) => { ctx.offered = a; return {button, paint: r => ready.push(r)}; };
 vm.createContext(ctx); vm.runInContext(code, ctx);

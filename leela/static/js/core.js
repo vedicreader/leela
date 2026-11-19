@@ -607,6 +607,9 @@ function enhanceCodeBlocks(el) {
   el._leeCodeViews = [...kept.values()].map(s => s._leeView);
 }
 const RUPAKA_MIME = 'application/vnd.rupaka+json';
+const RUPAKA_MEDIA = '/leemedia/';   // MEDIA_URL in core/web.py: the vault's demo media, on Leela's own origin
+//: `Rupaka.mount` with the media base on `el` itself: rupaka reads it with `closest('[data-rk-media]')`, which stops at the shadow root each demo draws in.
+function rupakaMount(el, spec, opts) { el.dataset.rkMedia = RUPAKA_MEDIA; return window.Rupaka.mount(el, spec, opts); }
 const rupaka = {hosts: new Map(), passes: new Map(), load: null, sheet: null, seq: 0};
 //: One promise, failure included: a missing bundle is one error line, not a refetch on every render. `retry` is the only way out.
 function loadRupaka(retry = false) {
@@ -656,7 +659,7 @@ function rupakaRevive(e) {
   if (!lost) return;
   const s = e.inner.rupaka, state = Rupaka.state(e.inner), picks = {...e.inner.leePicks};
   for (const x of s.st.log || []) picks[x.gate] = x.picked == null ? null : String(x.picked);
-  Rupaka.mount(e.inner, e.spec, e.opts); Rupaka.set(e.inner, state);
+  rupakaMount(e.inner, e.spec, e.opts); Rupaka.set(e.inner, state);
   rupakaSettle(e.inner, Object.fromEntries(Object.entries(s.st.gate).filter(([, v]) => v === 'done').map(([id]) => [id, picks[id] ?? null])));
   e.inner.leeInputs?.();
 }
@@ -669,7 +672,7 @@ function rupakaDraw(spec, key = null, pass = null, restore = null, opts = undefi
     const host = Object.assign(document.createElement('div'), {className: 'lee-rupaka'}), inner = document.createElement('div');
     host.attachShadow({mode: 'open'}).append(inner);
     e = {host, inner, spec, opts, ok: false, err: null, owner: pass?.owner};
-    e.done = loadRupaka().then(css => { rupakaStyle(host.shadowRoot, css); window.Rupaka.mount(inner, spec, opts); })
+    e.done = loadRupaka().then(css => { rupakaStyle(host.shadowRoot, css); rupakaMount(inner, spec, opts); })
       .then(async () => { if (restore) await restore(inner, spec); e.ok = true; }, err => { e.err = err; });
     if (key) rupaka.hosts.set(key, e);
   }
