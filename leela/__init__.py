@@ -1,5 +1,6 @@
 "leela: notebooks, files and live variables in the terminal and the browser."
-__version__ = "1.2.5"
+__version__ = "1.2.6"
+
 
 
 
