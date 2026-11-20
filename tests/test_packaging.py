@@ -549,6 +549,17 @@ def test_the_thin_app_keeps_the_bundle_id_and_document_types_of_the_old_one(mac)
     assert p['NSAppTransportSecurity'] == {'NSAllowsLocalNetworking': True} and p['LSMinimumSystemVersion'] == '14.0'
     assert p['CFBundleDocumentTypes'] == mac.PLIST['CFBundleDocumentTypes']
 
+def test_the_thin_app_may_use_the_microphone(tmp_path):
+    """Decision 29: macOS asks for the microphone only with a usage string, and the hardened runtime refuses it without the entitlement (as in Abhyasa's mac/)."""
+    import plistlib
+    from kavacha.ship import entitlements
+    t = _lock().t
+    assert t.info_plist().get('NSMicrophoneUsageDescription', '').startswith('Leela ')
+    ents = plistlib.loads(entitlements(t, tmp_path).read_bytes())
+    assert ents == {'com.apple.security.device.audio-input': True}
+    mk = (THIN/'Makefile').read_text()
+    assert 'grep -q com.apple.security.device.audio-input' in mk and 'NSMicrophoneUsageDescription' in mk, 'make verify checks both in the built app'
+
 def test_the_thin_app_build_checks_size_signature_and_the_pinned_uv():
     t = _lock().t
     assert (t.max_mb, t.max_zip_mb) == (60, 25), 'the plan: 60 MB on disk, 25 MB zipped'

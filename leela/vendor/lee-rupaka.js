@@ -3,7 +3,7 @@
    No network, no eval, no dependencies. Blocks and fns register with Rupaka.block and Rupaka.fn; boot.js mounts every [data-rupaka]. */
 (() => {
   if (window.Rupaka && window.Rupaka.core) return;   // the bundle came in twice (an htmx swap): keep the first copy
-  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.21', schema: 1};   // bundle() writes in rupaka.__version__
+  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.22', schema: 1};   // bundle() writes in rupaka.__version__
   const NS = 'http://www.w3.org/2000/svg', BAD = new Set(['__proto__', 'prototype', 'constructor']);
 
   function attrs(e, a) {
@@ -129,6 +129,8 @@
     const ctx = {s, spec, root, nodes: new WeakMap(), ids: new WeakMap(), live: g => !g || s.get(`gate.${g}`) === 'done', learn: spec.mode === 'learn',
                  step: () => s.st.step == null ? Infinity : +s.st.step,   // with no step key, each part shows
                  media: host.closest?.('[data-rk-media]')?.getAttribute('data-rk-media') ?? 'media/'};   // the base URL of profile assets
+    const inline = JSON.parse(host.closest?.('[data-rk-assets]')?.getAttribute('data-rk-assets') ?? 'null');
+    ctx.asset = name => inline?.[name] ?? ctx.media + name;
     ctx.build = b => build(b, ctx);
     // Each block has a stable id: its path in the spec, such as 'blocks.2' or 'blocks.0.blocks.1'. A part adds its own path: 'blocks.2.cells.0'.
     ctx.tag = (b, p) => { if (b && typeof b === 'object') { ctx.ids.set(b, p); (b.blocks || []).forEach((k, i) => ctx.tag(k, `${p}.blocks.${i}`)); } };
@@ -2288,8 +2290,8 @@ Rupaka.block('sound', (b, ctx) => {
   const {el} = Rupaka, web = u => typeof u === 'string' && /^https?:\/\//i.test(u);
   const prof = b.play ? ctx.spec.profiles?.[b.play.profile] : null, data = prof?.data || {}, tech = data.techniques?.[b.play?.technique];
   const v = b.voice || tech?.voice, recs = data.media || {};
-  // Only a hash-named asset on the host origin, or a YouTube id; never another URL.
-  const asset = src => { const m = /^asset:([0-9a-f]{64}\.[a-z0-9]+)$/.exec(src || ''); return m ? ctx.media + m[1] : null; };
+  // Only a hash-named asset on the host origin or inline in the page, or a YouTube id; never another URL.
+  const asset = src => { const m = /^asset:([0-9a-f]{64}\.[a-z0-9]+)$/.exec(src || ''); return m ? ctx.asset(m[1]) : null; };
   const sample = v?.kind === 'sample' && recs[v.media]?.kind === 'audio' ? recs[v.media] : null, tapeUrl = asset(sample?.src);
   const sounds = v?.kind === 'strike' || !!tapeUrl;
   const play = el('button', {type: 'button'}, 'Play', el('kbd', {text: 'W'}));

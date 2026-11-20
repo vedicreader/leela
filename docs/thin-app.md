@@ -189,7 +189,7 @@ The old app's window layer is pywebview's Cocoa backend (`webview/platforms/coco
 | Back navigation by the Delete key | turned off (C:283, C:649) | WebKit has it off by default; swipes are off | same |
 | Clipboard (`navigator.clipboard.writeText`) | WKWebView | WKWebView | same |
 | Notifications (`new Notification`) | none: WKWebView has no Notification API | none | same; the page says so |
-| Microphone and camera | none: no page uses `getUserMedia`; the voice is `speechSynthesis` | none; no `NSMicrophoneUsageDescription` and no audio entitlement | same. A feature that records needs `NSMicrophoneUsageDescription`, the `com.apple.security.device.audio-input` entitlement and `requestMediaCapturePermissionFor`. |
+| Microphone and camera | none: no page uses `getUserMedia`; the voice is `speechSynthesis` | `packaging/kavacha.toml` sets `NSMicrophoneUsageDescription` and the `com.apple.security.device.audio-input` entitlement (decision 29). `make -C packaging/mac verify` checks both in the built app. The kavacha launcher has no `requestMediaCapturePermissionFor`. No camera. | different. Not tested in a built app. A page that records also needs `requestMediaCapturePermissionFor` in kavacha's `Windows.swift` and a new launcher pin. |
 | Screen capture (`getDisplayMedia`) | none in WKWebView | none | same; the page falls back |
 
 ### Folders, the Dock and quitting

@@ -34,6 +34,14 @@ menu_action_js = "leeAct({action})"
 titlebar = "native"
 title_text = false
 
+# Decision 29: the microphone, for a page that records (getUserMedia). macOS asks only with the usage string, and the hardened runtime refuses
+# the microphone without the entitlement. `make -C packaging/mac verify` checks both in the built app, as Abhyasa's mac/Makefile does.
+[usage]
+NSMicrophoneUsageDescription = "Leela uses the microphone when a page you open in it records your voice."
+
+[entitlements]
+"com.apple.security.device.audio-input" = true
+
 [sites]
 list = "/app/sites"
 go = "/hub/go/"

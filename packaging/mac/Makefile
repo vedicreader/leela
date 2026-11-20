@@ -32,6 +32,8 @@ verify:
 	cd ../.. && $(PY) tools/lock.py verify-app packaging/mac/build/Leela.app --zip packaging/mac/build/Leela.zip
 	codesign --verify --strict --deep build/Leela.app
 	codesign --verify --strict build/Leela.app/Contents/Helpers/uv
+	@plutil -extract NSMicrophoneUsageDescription raw build/Leela.app/Contents/Info.plist >/dev/null || { echo "no NSMicrophoneUsageDescription"; exit 1; }
+	@codesign -d --entitlements - build/Leela.app 2>/dev/null | grep -q com.apple.security.device.audio-input || { echo "no audio-input entitlement"; exit 1; }
 
 # LOCK_DIR=<lock folder> WORK=<empty folder>: the built launcher's headless --lock-test, which builds the env as the app does; no window
 lock-test-launcher:
