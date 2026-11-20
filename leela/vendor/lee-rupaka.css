@@ -243,6 +243,12 @@
 /* blocks/links/links.css */
 /* links: drawn in the 3D view of a scene; it has no style of its own. */
 
+/* blocks/listen/listen.css */
+.rk-listen { padding: 12px 0; border-top: 1px solid var(--rk-line); }
+.rk-listen-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 8px 0; }
+.rk-listen .rk-note { display: block; margin: 4px 0; color: var(--rk-mute); }
+.rk-listen-out { margin: 4px 0; padding-left: 18px; font-variant-numeric: tabular-nums; }
+
 /* blocks/pair/pair.css */
 .rk-pair .heads { display: flex; justify-content: space-between; gap: var(--rk-s4); font-size: var(--rk-t-small); color: var(--rk-ink2); margin: 0 0 var(--rk-s2); }
 .rk-pair .line { display: flex; align-items: center; gap: var(--rk-s3); }
@@ -306,6 +312,23 @@
 
 /* blocks/readout/readout.css */
 .rk-readout .big { font: 400 var(--rk-t-big)/1.3 var(--rk-head); margin: var(--rk-s1) 0 0; color: var(--rk-fg); font-variant-numeric: tabular-nums; }
+
+/* blocks/rhythm/rhythm.css */
+.rk-rhythm { padding: 12px 0; border-top: 1px solid var(--rk-line); }
+.rk-rhythm-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 8px 0; }
+.rk-rhythm-tempo { display: flex; align-items: center; gap: 10px; margin: 4px 0 8px; }
+.rk-rhythm-tempo input { width: 100%; max-width: 260px; accent-color: var(--rk-acc); }
+.rk-rhythm-tempo input:focus-visible { outline: 2px solid var(--rk-acc); outline-offset: 4px; border-radius: 2px; }
+.rk-rhythm-tempo output { font-variant-numeric: tabular-nums; color: var(--rk-fg); }
+.rk-rhythm-show { display: grid; gap: 6px; margin: 8px 0; }
+.rk-rhythm-cue { font-weight: 600; color: var(--rk-fg); min-height: 1.4em; }
+.rk-rhythm-beats { display: flex; flex-wrap: wrap; gap: 6px; }
+.rk-rhythm-beat { min-width: 2.6em; padding: 6px 8px; text-align: center; border: 1px solid var(--rk-line); border-radius: 4px; color: var(--rk-fg); }
+.rk-rhythm-beat[aria-current="true"] { background: var(--rk-acc); border-color: var(--rk-acc); color: var(--rk-bg); }
+.rk-rhythm-turn .rk-rhythm-beat { border-style: dashed; }
+.rk-rhythm .rk-note { display: block; color: var(--rk-mute); }
+.rk-rhythm a { color: var(--rk-mute); font-size: .85em; }
+.rk-rhythm .rk-rhythm-credit { margin: 4px 0 0; font-size: .85em; }
 
 /* blocks/row/row.css */
 .rk-row { display: flex; gap: 28px; flex-wrap: wrap; align-items: flex-start; }

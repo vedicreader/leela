@@ -10,10 +10,10 @@ lee-widgets.js: built from frontend/widgets.js and frontend/widgets.css in a scr
 
 fonts/fa-solid-900.woff2 and fonts/LICENSE-Font-Awesome.txt: @fortawesome/fontawesome-free@5.15.4, the version html-manager 1.0.15 depends on.
 
-lee-rupaka.js and lee-rupaka.css: rupaka 0.0.22, wheel rupaka-0.0.22-py3-none-any.whl, SHA-256 0b731f4ed20257b39bc5b712fe03c93e716d1ac818ae3a9f74a992fcef19c972, from https://files.pythonhosted.org/packages/33/75/0a86270a091fffab1b82f4af62d9de49d66caa50c5fc0db71e93219fad12/rupaka-0.0.22-py3-none-any.whl. Download the wheel into an empty folder, check its digest, then write the two bundles with the wheel's own renderer:
+lee-rupaka.js and lee-rupaka.css: rupaka 0.0.23, wheel rupaka-0.0.23-py3-none-any.whl, SHA-256 8ccc81f70d635c2bb5c29f6855b25899e774843a2a09d8ee33c1e7bd83c61ced, from https://files.pythonhosted.org/packages/39/0f/57e9f51d3cda22745766180aad75b76dd5bbf19d0db4fd2f207dd5825371/rupaka-0.0.23-py3-none-any.whl. Download the wheel into an empty folder, check its digest, then write the two bundles with the wheel's own renderer:
 
-    d=$(mktemp -d) && curl -sS -o "$d/rupaka-0.0.22-py3-none-any.whl" https://files.pythonhosted.org/packages/33/75/0a86270a091fffab1b82f4af62d9de49d66caa50c5fc0db71e93219fad12/rupaka-0.0.22-py3-none-any.whl && shasum -a 256 "$d/rupaka-0.0.22-py3-none-any.whl"
-    uv run --no-project --with "$d/rupaka-0.0.22-py3-none-any.whl" python -I -c 'import sys;from pathlib import Path;from rupaka.render import bundle;o=Path(sys.argv[1]);(o/"lee-rupaka.js").write_text(bundle("js"));(o/"lee-rupaka.css").write_text(bundle("css"))' leela/vendor
+    d=$(mktemp -d) && curl -sS -o "$d/rupaka-0.0.23-py3-none-any.whl" https://files.pythonhosted.org/packages/39/0f/57e9f51d3cda22745766180aad75b76dd5bbf19d0db4fd2f207dd5825371/rupaka-0.0.23-py3-none-any.whl && shasum -a 256 "$d/rupaka-0.0.23-py3-none-any.whl"
+    uv run --no-project --with "$d/rupaka-0.0.23-py3-none-any.whl" python -I -c 'import sys;from pathlib import Path;from rupaka.render import bundle;o=Path(sys.argv[1]);(o/"lee-rupaka.js").write_text(bundle("js"));(o/"lee-rupaka.css").write_text(bundle("css"))' leela/vendor
 
 katex/: katex@0.16.47 from the npm registry, tarball katex-0.16.47.tgz, SHA-256 ad2d1ab2f7fcc227019784320e8a2c5218ff6bb333b36df4136d10365ae29375 (the registry's own sha1 0a13a42c2deb4f74e61f162d440b9165a548030f and sha512 Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg== both match). Download into an empty folder, check the digests, extract into another, and copy dist/katex.min.js, dist/katex.min.css and dist/fonts/*.woff2 (the stylesheet lists woff and ttf after woff2; no browser Leela runs in fetches them) with LICENSE as LICENSE-KaTeX.txt:
 
@@ -22,6 +22,8 @@ katex/: katex@0.16.47 from the npm registry, tarball katex-0.16.47.tgz, SHA-256 
 
 katex/katex.min.js SHA-256 a29d2961d3146de5949d78ac7c1a9d93ae54955bad22a6db4fbe836e88e8bf48
 katex/katex.min.css SHA-256 0289a02cf451a44dd73add683a09644252363871ac11713a647b732cee8b1ee3
+
+rupaka's listen block loads its AudioWorklet from beside lee-rupaka.js. The worklet is not copied: Leela serves the installed rupaka's static/listen-worklet.js at /leestatic/listen-worklet.js (`core.web.listen_routes`), as it serves `bundle('three')` at /leestatic/three.js.
 
 The screen guide's board is not copied. Leela serves it from the rupaka that pyproject.toml asks for: `rupaka.board.bundle('js')` and `bundle('css')` at /leeboard/board.js and /leeboard/board.css, `rupaka.board.assets().tex` at /leeboard/texparts.js, and the folder of the pens (rough.js, perfect-freehand.mjs and their licences) at /leeboard/libs/, which the page passes to the board as `host.assets`. The board's paper uses the hand font Patrick Hand (OFL). It is not copied either: Leela serves rupaka's font files and their `@font-face` rules (`rupaka.render.font_css`) at /leefonts/.
 

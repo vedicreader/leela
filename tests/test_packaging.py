@@ -560,6 +560,17 @@ def test_the_thin_app_may_use_the_microphone(tmp_path):
     mk = (THIN/'Makefile').read_text()
     assert 'grep -q com.apple.security.device.audio-input' in mk and 'NSMicrophoneUsageDescription' in mk, 'make verify checks both in the built app'
 
+def test_the_fat_app_may_use_the_microphone(mac):
+    """The DMG app from `make ship-fat` (py2app, tools/ship.sh) does not read kavacha.toml, so its plist and entitlements carry the microphone themselves, with the thin app's text, and the ship fails on a built app without them."""
+    import plistlib, tomllib
+    usage = tomllib.loads((ROOT/'packaging'/'kavacha.toml').read_text())['usage']['NSMicrophoneUsageDescription']
+    assert mac.PLIST.get('NSMicrophoneUsageDescription') == usage
+    ents = plistlib.loads((ROOT/'packaging'/'macos'/'entitlements.plist').read_bytes())   # build_release.ENTITLEMENTS, which kavacha.sign gives the app
+    assert ents.get('com.apple.security.device.audio-input') is True
+    sh = (ROOT/'tools'/'ship.sh').read_text()
+    assert 'plutil -extract NSMicrophoneUsageDescription raw dist/Leela.app/Contents/Info.plist' in sh
+    assert re.search(r'codesign -d --entitlements - (--xml )?dist/Leela\.app .*grep -q com\.apple\.security\.device\.audio-input', sh)
+
 def test_the_thin_app_build_checks_size_signature_and_the_pinned_uv():
     t = _lock().t
     assert (t.max_mb, t.max_zip_mb) == (60, 25), 'the plan: 60 MB on disk, 25 MB zipped'

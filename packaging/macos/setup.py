@@ -1,6 +1,6 @@
 "py2app definition for `dist/Leela.app`. Run it through `setup_app.py`."
 from __future__ import annotations
-import sys, time
+import sys, time, tomllib
 from fastcore.all import Path
 from setuptools import setup
 
@@ -136,7 +136,10 @@ APP = App(
     grafted    = GRAFTED,
     unreachable= UNREACHABLE,
     data       = DATA_FILES,
-    plist      = {'NSHumanReadableCopyright': 'Apache-2.0', 'UTImportedTypeDeclarations': imported_types()},
+    # Decision 29, as in the thin app: macOS asks for the microphone only with this string (the text is kavacha.toml's,
+    # which py2app does not read); entitlements.plist carries the hardened runtime's audio-input. tools/ship.sh checks both.
+    plist      = {'NSHumanReadableCopyright': 'Apache-2.0', 'UTImportedTypeDeclarations': imported_types(),
+                  'NSMicrophoneUsageDescription': tomllib.loads((ROOT/'packaging'/'kavacha.toml').read_text())['usage']['NSMicrophoneUsageDescription']},
     doc_types  = doc_types(),
     extras     = ['gateway', 'macapp'],
     # The oldest macOS the suite runs on (a macos-14 runner). numpy's wheel for a macOS 14 build needs 14. Leela never ran on kavacha's default, 11.0.

@@ -42,6 +42,9 @@ export LEELA_CODESIGN_IDENTITY LEELA_NOTARY_PROFILE="${LEELA_NOTARY_PROFILE:-}" 
 # build_release signs with the identity, makes the DMG, notarizes it and staples it
 uv run --frozen python tools/build_release.py
 xcrun stapler validate $D
+# Decision 29: without both, macOS never asks and the page's getUserMedia fails (packaging/mac/Makefile verify checks the thin app the same way)
+plutil -extract NSMicrophoneUsageDescription raw dist/Leela.app/Contents/Info.plist >/dev/null || { echo "dist/Leela.app has no NSMicrophoneUsageDescription" >&2; exit 1; }
+codesign -d --entitlements - dist/Leela.app 2>/dev/null | grep -q com.apple.security.device.audio-input || { echo "dist/Leela.app has no audio-input entitlement" >&2; exit 1; }
 spctl -a -t exec -vv dist/Leela.app 2>&1 | tee /dev/stderr | grep -q 'source=Notarized Developer ID' ||
   { echo "Gatekeeper does not accept dist/Leela.app as notarized" >&2; exit 1; }
 # the ticket of the DMG covers the app in it, so the app takes a staple of its own before it goes in the zip

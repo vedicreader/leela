@@ -36,7 +36,7 @@ from .core.web import diff_payload as _diff
 from .core.web import fail as _fail
 from .blocks.runtime.kernels import NoVenv
 from .core.web import off_loop as _off_loop
-from .core.web import Assets, IDE_BUNDLES, JsonBody, board_routes, board_url, hand_routes, hand_url, static_dirs, three_routes
+from .core.web import Assets, IDE_BUNDLES, JsonBody, board_routes, board_url, hand_routes, hand_url, listen_routes, static_dirs, three_routes
 from .core.text import did_you_mean
 from .core.text import MD_HIGHLIGHT, clean_html, md_block_diff, md_blocks, md_change_kinds
 from .core.keys import by_scope, chord_display, toast_rows
@@ -931,7 +931,7 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
                    middleware=(Middleware(GZipMiddleware, minimum_size=512), Middleware(JsonBody)),
                    on_startup=[ws.opened, _warm_probes], on_shutdown=[ws.shutdown],
                    exception_handlers={NoVenv: lambda req, e: _fail(e, 409)},   # every route that needs Python gives one answer
-                   routes=(*three_routes(), Mount('/leestatic', Assets(*static_dirs())), *hand_routes(), *board_routes(),
+                   routes=(*three_routes(), *listen_routes(), Mount('/leestatic', Assets(*static_dirs())), *hand_routes(), *board_routes(),
                            WebSocketRoute('/term/ws', term_ws)))
     rt = app.route
     _docstore = DocStore(ws)

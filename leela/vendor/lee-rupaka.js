@@ -3,7 +3,7 @@
    No network, no eval, no dependencies. Blocks and fns register with Rupaka.block and Rupaka.fn; boot.js mounts every [data-rupaka]. */
 (() => {
   if (window.Rupaka && window.Rupaka.core) return;   // the bundle came in twice (an htmx swap): keep the first copy
-  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.22', schema: 1};   // bundle() writes in rupaka.__version__
+  const R = window.Rupaka = {blocks: {}, fns: {}, core: true, version: '0.0.23', schema: 1};   // bundle() writes in rupaka.__version__
   const NS = 'http://www.w3.org/2000/svg', BAD = new Set(['__proto__', 'prototype', 'constructor']);
 
   function attrs(e, a) {
@@ -120,6 +120,7 @@
 
   R.build = build;
   const CTX = new WeakMap();   // store -> ctx, for Rupaka.settle, Rupaka.open and Rupaka.options
+  const BUFS = new Map();      // resolved URL -> a promise of a decoded AudioBuffer, for the page
   R.mount = (host, spec, opts) => {
     const save = opts?.save;
     if (!spec || typeof spec !== 'object' || Array.isArray(spec)) throw new Error('the spec is not an object');
@@ -132,6 +133,25 @@
     const inline = JSON.parse(host.closest?.('[data-rk-assets]')?.getAttribute('data-rk-assets') ?? 'null');
     ctx.asset = name => inline?.[name] ?? ctx.media + name;
     ctx.build = b => build(b, ctx);
+    ctx.audio = () => (window.__rkAudio ||= new (window.AudioContext || window.webkitAudioContext)());
+    // A recording as a decoded AudioBuffer on ctx.audio(). A data URI decodes in place. Another URL loads only from this page's own
+    // http(s) origin; any other origin, or a file: or opaque origin, rejects and asks nothing. A redirect is an error, so the request
+    // cannot go on to another origin. This is the bundle's only request.
+    ctx.buffer = name => {
+      const u = String(ctx.asset(name)), m = /^data:[^,]*;base64,([A-Za-z0-9+/=]+)$/.exec(u);
+      let at = null; if (!m) try { at = new URL(u, location.href); } catch (_) { /* not a URL: it rejects below */ }
+      const key = at ? at.href : u;
+      if (!BUFS.has(key)) {
+        const sameOrigin = !!at && /^https?:$/.test(at.protocol) && location.origin !== 'null' && at.origin === location.origin;
+        const got = m ? Promise.resolve().then(() => { const s = atob(m[1]), a = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) a[i] = s.charCodeAt(i); return a.buffer; })
+          : sameOrigin ? fetch(at.href, {credentials: 'same-origin', redirect: 'error'}).then(r => { if (!r.ok) throw new Error(`${name}: HTTP ${r.status}`); return r.arrayBuffer(); })
+          : Promise.reject(new Error(`${name} is not on this page's origin, so it does not load`));
+        const p = got.then(x => ctx.audio().decodeAudioData(x));
+        p.catch(() => BUFS.delete(key));   // a failed load can try again later
+        BUFS.set(key, p);
+      }
+      return BUFS.get(key);
+    };
     // Each block has a stable id: its path in the spec, such as 'blocks.2' or 'blocks.0.blocks.1'. A part adds its own path: 'blocks.2.cells.0'.
     ctx.tag = (b, p) => { if (b && typeof b === 'object') { ctx.ids.set(b, p); (b.blocks || []).forEach((k, i) => ctx.tag(k, `${p}.blocks.${i}`)); } };
     ctx.id = (b, part) => { const p = ctx.ids.get(b); return p == null ? null : part == null ? p : `${p}.${part}`; };
@@ -1303,6 +1323,167 @@ Rupaka.block('layers', (b, ctx) => {
   });
 })();
 
+/* blocks/listen/listen.js */
+/* listen: opt-in microphone timing on this device. Only a click on Listen on this device asks for the microphone. The sound goes to an
+   onset worklet (rupaka/static/listen-worklet.js, served beside rupaka.js) and is not kept: no recorder, no stored audio, no network.
+   The beats are times in seconds on the shared page clock, ctx.audio(). */
+(() => {
+  const SRC = document.currentScript?.src || '', query = SRC.match(/\?[^#]*/)?.[0] || '';   // the bundle and this block are one script
+  const us = d => Math.round(d * 1e6) / 1e3;   // seconds to ms, rounded to a microsecond, so that 1.03 - 1 gives 30 ms
+  const median = a => { const s = [...a].sort((x, y) => x - y), n = s.length; return n ? (n % 2 ? s[n >> 1] : (s[n / 2 - 1] + s[n / 2]) / 2) : null; };
+
+  // Each beat takes the nearest onset within ±min(half the gap to its next beat, window) ms. The closest pairs go first, and one onset
+  // goes to one beat at most. Within ±tolerance ms it is 'on'; else 'early' or 'late' with signed ms; with no onset, 'missed'.
+  const match = (beats, onsets, {tolerance = 30, window = 150} = {}) => {
+    const bs = (beats || []).map(Number), os = (onsets || []).map(Number), pairs = [];
+    bs.forEach((t, i) => {
+      const gap = Math.min(i > 0 ? Math.abs(us(t - bs[i - 1])) : Infinity, i < bs.length - 1 ? Math.abs(us(bs[i + 1] - t)) : Infinity);
+      const reach = Math.min(window, gap / 2);
+      os.forEach((o, j) => { const d = us(o - t); if (Math.abs(d) <= reach) pairs.push([Math.abs(d), i, j, d]); });
+    });
+    pairs.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+    const got = new Map(), used = new Set();
+    for (const [, i, j, d] of pairs) if (!got.has(i) && !used.has(j)) { got.set(i, d); used.add(j); }
+    return bs.map((beat, i) => {
+      if (!got.has(i)) return {beat, verdict: 'missed', ms: null};
+      const d = got.get(i);
+      return {beat, verdict: Math.abs(d) <= tolerance ? 'on' : d < 0 ? 'early' : 'late', ms: Math.round(d * 10) / 10 || 0};
+    });
+  };
+
+  // Tap-to-calibrate: the median ms of the taps after their clicks. An onset in the 40 ms after a click is the speaker that the
+  // microphone hears, so it does not count. With fewer than four taps, null. `wide` when the taps spread (SD) more than 30 ms.
+  const calib = (clicks, onsets, {window = 150, bleed = 40} = {}) => {
+    const cs = (clicks || []).map(Number);
+    const kept = (onsets || []).map(Number).filter(o => !cs.some(c => { const d = us(o - c); return d >= 0 && d <= bleed; }));
+    const ds = match(cs, kept, {window, tolerance: 0}).filter(r => r.ms != null).map(r => r.ms);
+    if (ds.length < 4) return null;
+    const mean = ds.reduce((a, d) => a + d, 0) / ds.length, sd = Math.sqrt(ds.reduce((a, d) => a + (d - mean) ** 2, 0) / ds.length);
+    return {ms: median(ds), spread: Math.round(sd * 10) / 10, n: ds.length, wide: sd > 30};
+  };
+
+  const loaded = new WeakMap();   // context -> the promise of its worklet module
+  const say = r => r.verdict === 'missed' || r.verdict === 'on' ? r.verdict : `${r.verdict} ${Math.abs(Math.round(r.ms))} ms`;
+
+  Rupaka.block('listen', Object.assign((b, ctx) => {
+    const {el} = Rupaka, key = b.beats?.[0], outKey = b.out?.[0], tolerance = b.tolerance ?? 30, window_ = b.window ?? 150;
+    const button = (text, k) => {
+      const e = el('button', {type: 'button'}, text, el('kbd', {text: k.toUpperCase()}));
+      e.addEventListener('keydown', ev => {
+        if (ev.key.toLowerCase() !== k || ev.repeat || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+        ev.preventDefault(); e.click();
+      });
+      return e;
+    };
+    const start = button('Listen on this device', 'w'), stop = button('Stop listening', 's'), cal = button('Calibrate', 'e');
+    const status = el('p', {class: 'rk-note rk-listen-status', 'aria-live': 'polite'});
+    const why = el('p', {class: 'rk-note rk-listen-why', hidden: true});
+    const list = el('ul', {class: 'rk-listen-out', 'aria-live': 'polite'});
+    const root = el('div', {}, el('span', {class: 'rk-lbl', text: 'Microphone timing'}), el('div', {class: 'rk-listen-acts'}, start, stop, cal),
+      status, why, list, el('p', {class: 'rk-note', text: 'The sound stays on this device. Nothing is recorded or sent.'}));
+    let mic = null, epoch = 0, heard = [], shift = 0, busy = false, seen = null, timer = 0, clock = 0;
+
+    const can = () => !!(Rupaka.base && navigator.mediaDevices?.getUserMedia && window.AudioWorkletNode && (window.AudioContext || window.webkitAudioContext));
+    const show = () => { start.hidden = !!mic; stop.hidden = !mic; cal.hidden = !mic || b.calibrate === false; };
+    const none = () => {
+      why.textContent = 'The microphone is not available here.'; why.hidden = false; status.textContent = '';
+      [start, stop, cal].forEach(x => { x.hidden = true; });
+    };
+    const end = () => {
+      epoch++; busy = false; clearTimeout(timer); clearTimeout(clock);
+      if (!mic) return;
+      const m = mic; mic = null; clearInterval(m.alive);
+      m.stream.getTracks().forEach(t => t.stop());
+      m.node.port.onmessage = null;
+      [m.src, m.node, m.mute].forEach(n => n.disconnect());
+    };
+    const late = ac => mic.lat + (ac.outputLatency || 0);   // the input and output latency, in seconds
+
+    const judge = beats => {
+      const ac = ctx.audio(), res = match(beats, heard.map(t => t - late(ac) - shift), {tolerance, window: window_});
+      list.replaceChildren(...res.map((r, i) => el('li', {text: `Beat ${i + 1}: ${say(r)}`})));
+      if (outKey) ctx.s.set(outKey, res);
+    };
+    // When the beats change, wait until their last beat (and its window) has passed on the page clock, then judge them.
+    const watch = () => {
+      const beats = key ? ctx.s.get(key) : null, sig = JSON.stringify(beats ?? null);
+      if (sig === seen) return;
+      seen = sig; clearTimeout(timer);
+      if (!mic || !Array.isArray(beats) || !beats.length || !beats.every(Number.isFinite)) return;
+      const last = Math.max(...beats), ticket = epoch;
+      if (last < mic.from) return;   // a round from before the microphone was on
+      const wait = () => {
+        if (ticket !== epoch || !mic) return;
+        const left = last + window_ / 1000 + 0.1 - ctx.audio().currentTime;
+        if (left > 0) timer = setTimeout(wait, Math.min(1000, left * 1000 + 20));
+        else judge(beats);
+      };
+      wait();
+    };
+
+    start.addEventListener('click', async () => {
+      if (mic || busy || !ctx.live(b.after)) return;
+      if (!can()) return none();
+      busy = true;
+      const ticket = ++epoch;
+      let stream = null;
+      try {
+        const ac = ctx.audio();
+        if (ac.state === 'suspended') await ac.resume();
+        stream = await navigator.mediaDevices.getUserMedia({audio: {echoCancellation: false, noiseSuppression: false, autoGainControl: false}});
+        if (!loaded.has(ac)) loaded.set(ac, ac.audioWorklet.addModule(Rupaka.base + 'listen-worklet.js' + query).catch(e => { loaded.delete(ac); throw e; }));
+        await loaded.get(ac);
+        if (ticket !== epoch || !root.isConnected) { stream.getTracks().forEach(t => t.stop()); return; }
+        const src = ac.createMediaStreamSource(stream), node = new AudioWorkletNode(ac, 'rupaka-listen'), mute = ac.createGain();
+        mute.gain.value = 0; src.connect(node); node.connect(mute); mute.connect(ac.destination);   // a silent pull keeps the node running
+        const tr = stream.getAudioTracks()[0];
+        mic = {stream, src, node, mute, lat: tr?.getSettings?.().latency || 0, from: ac.currentTime,
+               alive: setInterval(() => { if (!root.isConnected) end(); }, 1000)};   // a demo taken off the page lets go of the microphone
+        heard = [];
+        node.port.onmessage = e => { heard.push(e.data.t); if (heard.length > 4000) heard.splice(0, 2000); };
+        busy = false; why.hidden = true;
+        status.textContent = 'Listening. Play along with the beats.';
+        show(); seen = null; watch();
+      } catch (_) {
+        stream?.getTracks().forEach(t => t.stop());
+        if (ticket === epoch) { busy = false; none(); }
+      }
+    });
+    stop.addEventListener('click', () => { end(); status.textContent = 'The microphone is off.'; show(); });
+
+    cal.addEventListener('click', () => {
+      if (!mic || busy) return;
+      busy = true;
+      const ac = ctx.audio(), ticket = epoch, t0 = ac.currentTime + 0.6, clicks = Array.from({length: 8}, (_, k) => t0 + k * 0.6);
+      clicks.forEach(at => {
+        const o = ac.createOscillator(), g = ac.createGain();
+        o.frequency.value = 1000; g.gain.setValueAtTime(0.3, at); g.gain.exponentialRampToValueAtTime(0.0001, at + 0.03);
+        o.connect(g); g.connect(ac.destination); o.onended = () => { o.disconnect(); g.disconnect(); };
+        o.start(at); o.stop(at + 0.04);
+      });
+      status.textContent = 'Tap the drum with each of the 8 clicks. Headphones help: then the microphone does not hear the clicks.';
+      const done = () => {
+        if (ticket !== epoch || !mic) return;
+        if (ac.currentTime < clicks[7] + 0.4) { clock = setTimeout(done, 100); return; }
+        busy = false;
+        const r = calib(clicks, heard.map(t => t - late(ac)), {window: window_});
+        if (!r) { status.textContent = 'Too few taps were heard. Click Calibrate to try again.'; return; }
+        shift = r.ms / 1000;
+        status.textContent = `Calibrated: ${Math.round(r.ms)} ms.` +
+          (r.wide ? ` Your taps spread by ${Math.round(r.spread)} ms, which is more than 30 ms. Try again for a better value.` : '');
+      };
+      done();
+    });
+
+    ctx.s.on(k => {
+      if (mic && !ctx.live(b.after)) { end(); show(); status.textContent = ''; }
+      if (k === '*' || k === key) watch();
+    });
+    if (can()) show(); else none();
+    return root;
+  }, {match, calib}));
+})();
+
 /* blocks/pair/pair.js */
 /* pair: input cells, an arrow and the answer, as one row of a worked example: [18] → 47. The parts come in one by one. */
 Rupaka.block('pair', (b, ctx) => {
@@ -1688,6 +1869,175 @@ Rupaka.block('readout', (b, ctx) => {
   const {el, fmt} = Rupaka, d = el('div', {class: 'big', 'aria-live': 'polite'});
   ctx.s.on(() => { d.textContent = fmt(b.text, ctx.s.st); });
   return el('div', {}, Rupaka.label(b), d);
+});
+
+/* blocks/rhythm/rhythm.js */
+/* rhythm: a practice round on the shared audio clock, ctx.audio(). Nothing plays before Start.
+   A lookahead scheduler wakes about every 25 ms and gives each sound that starts in the next 100 ms its exact start time on the audio clock.
+   The strike synthesis repeats the few lines of sound.js, so that the sound block stays as it is. */
+Rupaka.block('rhythm', (b, ctx) => {
+  const {el} = Rupaka, AHEAD = .1, WAKE = 25, LEAD = .1, LO = 30, HI = 240;
+  const clamp = (v, lo, hi, d) => { const x = v == null ? NaN : +v; return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : d; };
+  const web = u => typeof u === 'string' && /^https?:\/\//i.test(u);
+  const data = ctx.spec.profiles?.[b.profile]?.data || {}, techs = data.techniques || {}, recs = data.media || {};
+  const pattern = Array.isArray(b.pattern) ? b.pattern : [], n = pattern.length;
+  const countIn = Math.round(clamp(b.count_in, 0, 8, 4)), cycles = Math.round(clamp(b.cycles, 1, 16, 2)), turns = b.turns !== false;
+  let tempo = clamp(b.tempo, LO, HI, 60);
+  // The same asset rule as sound: only a hash-named asset, which ctx.buffer loads through ctx.asset, never another URL.
+  const asset = src => /^asset:([0-9a-f]{64}\.[a-z0-9]+)$/.exec(src || '')?.[1] ?? null;
+  const voice = id => {
+    const v = techs[id]?.voice, r = v?.kind === 'sample' ? recs[v.media] : null, name = r?.kind === 'audio' ? asset(r.src) : null;
+    return v?.kind === 'strike' ? v : name ? {kind: 'sample', name, start: +r.start || 0, end: r.end == null ? null : +r.end} : null;
+  };
+  const voices = pattern.map(x => x === 'rest' ? null : voice(x)), playable = voices.some(Boolean);
+  const used = [...new Set(pattern.map(x => techs[x]?.voice).filter(v => v?.kind === 'sample' && recs[v.media]?.kind === 'audio').map(v => v.media))];
+
+  const go = el('button', {type: 'button', class: 'rk-rhythm-go'}, 'Start', el('kbd', {text: 'W'}));
+  const tick = el('button', {type: 'button', 'aria-pressed': 'false'}, 'Click on my turn', el('kbd', {text: 'Q'}));
+  const inp = el('input', {type: 'range', min: LO, max: HI, step: 1, 'aria-label': 'Tempo in beats per minute'}), bpm = el('output');
+  const cue = el('span', {class: 'rk-rhythm-cue', 'aria-live': 'polite', text: 'Press Start.'});
+  const cells = pattern.map(x => el('span', {class: 'rk-rhythm-beat', text: x === 'rest' ? '–' : techs[x]?.label || String(x)}));
+  const note = el('span', {class: 'rk-note', text: !playable ? 'This pattern has no sound.' : used.length ? 'Recorded samples.' : 'Synthesised strokes; a real instrument sounds different.'});
+  const status = el('span', {class: 'rk-note', 'aria-live': 'polite'}), credits = el('div', {class: 'rk-rhythm-credits'});
+  const root = el('div', {}, el('span', {class: 'rk-lbl', text: b.label || 'Rhythm'}),
+    el('div', {class: 'rk-rhythm-acts'}, go, tick),
+    el('div', {class: 'rk-rhythm-tempo'}, inp, bpm),
+    el('div', {class: 'rk-rhythm-show'}, cue, el('div', {class: 'rk-rhythm-beats'}, ...cells)),
+    note, credits, status);
+
+  let audio = null, timer = 0, epoch = 0, on = false, run = null, active = [], clickOn = false, shown = false;
+  const hiss = new Map();   // noise buffers by length
+  const allowed = () => ctx.live(b.after) && ctx.live(b.lock);
+  const setTempo = v => { tempo = clamp(v, LO, HI, tempo); inp.value = tempo; bpm.textContent = `${+tempo.toFixed(1)} beats per minute`; };
+  setTempo(tempo);
+
+  const stop = (text = '') => {
+    epoch++; clearTimeout(timer); timer = 0; on = false; run = null;
+    active.splice(0).forEach(({source, gain}) => {
+      try { source.stop(); } catch (_) { /* A source can already have ended. */ }
+      source.disconnect(); gain.disconnect();
+    });
+    go.firstChild.textContent = 'Start'; cue.textContent = text;
+    cells.forEach(c => c.removeAttribute('aria-current')); root.classList.remove('rk-rhythm-turn');
+  };
+  // Connect a source through a gain to the output; with decay, the gain falls over `dur` seconds.
+  const out = (source, level, at, dur, decay = true) => {
+    const gain = audio.createGain();
+    gain.gain.setValueAtTime(Math.max(.00001, level), at);
+    if (decay) gain.gain.exponentialRampToValueAtTime(.00001, at + dur);
+    source.connect(gain); gain.connect(audio.destination);
+    const part = {source, gain}; active.push(part);
+    source.onended = () => { source.disconnect(); gain.disconnect(); active = active.filter(x => x !== part); };
+  };
+  const click = (at, level, hz) => {
+    const o = audio.createOscillator(); o.frequency.setValueAtTime(hz, at);
+    out(o, level, at, .03); o.start(at); o.stop(at + .03);
+  };
+  const noise = d => {
+    const k = `${audio.sampleRate}:${d}`;
+    if (!hiss.has(k)) {
+      const buf = audio.createBuffer(1, Math.ceil(audio.sampleRate * d), audio.sampleRate), x = buf.getChannelData(0);
+      for (let i = 0; i < x.length; i++) x[i] = Math.random() * 2 - 1;
+      hiss.set(k, buf);
+    }
+    return hiss.get(k);
+  };
+  // The strike of sound.js, at time `at`: one oscillator per partial, and a short noise burst.
+  const strike = (v, at) => {
+    const scale = v.gain / Math.max(1, v.partials.reduce((s, p) => s + p.gain, 0) + (v.noise || 0));
+    v.partials.forEach(p => {
+      const o = audio.createOscillator();
+      o.frequency.setValueAtTime(v.frequency * p.ratio, at);
+      o.detune.setValueAtTime(v.bend || 0, at);
+      o.detune.linearRampToValueAtTime(0, at + Math.min(.08, v.decay));
+      out(o, scale * p.gain, at, v.decay); o.start(at); o.stop(at + v.decay);
+    });
+    if (v.noise) {
+      const d = Math.min(.04, v.decay), src = audio.createBufferSource(); src.buffer = noise(d);
+      out(src, scale * v.noise, at, d); src.start(at); src.stop(at + d);
+    }
+  };
+  // A recording plays its [start, end] window from a decoded buffer, so it too starts on the audio clock.
+  const sample = (v, buf, at) => {
+    const off = Math.min(v.start, buf.duration), len = (v.end == null ? buf.duration : Math.min(v.end, buf.duration)) - off;
+    if (len <= 0) return;
+    const src = audio.createBufferSource(); src.buffer = buf;
+    out(src, 1, at, len, false); src.start(at, off, len);
+  };
+  // A recording comes from the page (a data URI) or from the media base on the page's own origin, through ctx.buffer.
+  // A recording that does not load gives null, and its strokes are silent.
+  const load = name => ctx.buffer(name).catch(() => null);
+
+  // The round: a count-in, then each played cycle, and with turns a silent cycle after each one.
+  const plan = () => [...(countIn ? [{kind: 'count', len: countIn}] : []),
+    ...Array.from({length: cycles}, () => [{kind: 'play', len: n}, ...(turns ? [{kind: 'turn', len: n}] : [])]).flat()];
+  const showCue = c => {
+    const turn = c.kind === 'turn';
+    cue.textContent = c.kind === 'count' ? `Count in: ${c.beat + 1}` : turn ? 'Your turn' : 'Listen';
+    root.classList.toggle('rk-rhythm-turn', turn);
+    cells.forEach((x, i) => c.kind !== 'count' && i === c.beat ? x.setAttribute('aria-current', 'true') : x.removeAttribute('aria-current'));
+  };
+  const wake = ticket => {
+    if (ticket !== epoch || !run) return;
+    if (!root.isConnected) return stop();
+    const now = audio.currentTime;
+    while (run.seg < run.segs.length && run.next < now + AHEAD) {
+      const seg = run.segs[run.seg];
+      if (run.beat === 0) {   // a cycle keeps the tempo that it starts with
+        run.spb = 60 / tempo; run.start = run.next;
+        if (seg.kind === 'turn' && b.beats) ctx.put(b, b.beats, Array.from({length: seg.len}, (_, k) => run.start + k * run.spb));
+      }
+      const at = run.start + run.beat * run.spb, v = voices[run.beat];
+      if (seg.kind === 'count') click(at, .3, 1500);
+      else if (seg.kind === 'play') { if (v?.kind === 'strike') strike(v, at); else if (v?.kind === 'sample' && run.bufs[run.beat]) sample(v, run.bufs[run.beat], at); }
+      else if (clickOn) click(at, .05, 1000);
+      run.cues.push({at, kind: seg.kind, beat: run.beat});
+      run.beat++; run.next = run.start + run.beat * run.spb;
+      if (run.beat >= seg.len) { run.seg++; run.beat = 0; }
+    }
+    while (run.cues.length && run.cues[0].at <= now) showCue(run.cues.shift());
+    if (run.seg >= run.segs.length && now >= run.next) return stop('Done. Press Start to play again.');
+    timer = setTimeout(() => wake(ticket), WAKE);
+  };
+  const start = async () => {
+    if (!allowed() || !root.isConnected || !playable) return;
+    on = true; const ticket = ++epoch;
+    go.firstChild.textContent = 'Stop'; status.textContent = ''; cue.textContent = 'Get ready.';
+    try {
+      audio = ctx.audio();
+      if (audio.state === 'suspended') await audio.resume();
+      const bufs = await Promise.all(voices.map(v => v?.kind === 'sample' ? load(v.name) : null));
+      if (ticket !== epoch || !allowed() || !root.isConnected) return;
+      if (voices.some((v, i) => v?.kind === 'sample' && !bufs[i])) status.textContent = 'A recording did not load, so its strokes are silent.';
+      run = {segs: plan(), seg: 0, beat: 0, next: audio.currentTime + LEAD, start: 0, spb: 60 / tempo, cues: [], bufs};
+      wake(ticket);
+    } catch (_) { stop(); status.textContent = 'Sound could not start. Try Start again.'; }
+  };
+
+  go.addEventListener('click', () => on ? stop('Stopped.') : start());
+  tick.addEventListener('click', () => { clickOn = !clickOn; tick.setAttribute('aria-pressed', String(clickOn)); });
+  inp.addEventListener('input', () => setTempo(+inp.value));
+  inp.addEventListener('keydown', e => {
+    const k = e.key.toLowerCase();
+    if ((k !== 'a' && k !== 'd') || e.metaKey || e.ctrlKey || e.altKey) return;
+    e.preventDefault(); setTempo(tempo + (k === 'd' ? 1 : -1) * (e.shiftKey ? 10 : 1));
+  });
+  const key = (btn, k) => btn.addEventListener('keydown', e => {
+    if (e.key.toLowerCase() !== k || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+    e.preventDefault(); btn.click();
+  });
+  key(go, 'w'); key(tick, 'q');
+
+  const credit = r => el('p', {class: 'rk-note rk-rhythm-credit'}, `${r.credit?.who}, ${r.credit?.license}. `,
+    web(r.credit?.url) ? el('a', {href: r.credit.url, target: '_blank', rel: 'noopener noreferrer', text: 'Source'}) : null);
+  const sync = () => {
+    const ok = allowed();
+    go.disabled = !ok || !playable; inp.disabled = tick.disabled = !ok;
+    if (!ok && on) stop();
+    if (ok !== shown) { shown = ok; credits.replaceChildren(...(ok ? used.map(id => credit(recs[id])) : [])); }
+  };
+  ctx.s.on(sync); sync();
+  return root;
 });
 
 /* blocks/row/row.js */

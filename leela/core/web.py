@@ -86,6 +86,14 @@ def three_routes():
     from starlette.routing import Route
     return [Route('/leestatic/three.js', lambda req: Response(bundle('three'), media_type='text/javascript', headers={'Cache-Control': 'max-age=86400'}))]
 
+def listen_routes():
+    "`/leestatic/listen-worklet.js`, where rupaka's `listen` block loads its AudioWorklet (`Rupaka.base`, the folder of `lee-rupaka.js`): the installed rupaka's `static/listen-worklet.js`."
+    import rupaka
+    from starlette.responses import Response
+    from starlette.routing import Route
+    js = (Path(rupaka.__file__).parent/'static'/'listen-worklet.js').read_text(encoding='utf-8')
+    return [Route('/leestatic/listen-worklet.js', lambda req: Response(js, media_type='text/javascript', headers={'Cache-Control': 'max-age=86400'}))]
+
 class Assets:
     "Serve one URL prefix from several directories, first match winning."
     def __init__(self, *dirs):
