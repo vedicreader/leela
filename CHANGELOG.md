@@ -2,6 +2,16 @@
 
 <!-- do not remove -->
 
+## 1.2.5
+
+Demos with real recordings, on rupaka 0.0.22 and abhyasa 0.0.31.
+
+- A Rupaka demo plays the recordings that Abhyasa stored in the vault. Leela serves them from `/leemedia/<sha256>.<ext>`, from the vault's `demo-media` folder only.
+- Every Rupaka demo in a lesson, a slide or a cell gets the `/leemedia/` address, including a demo inside a shadow root.
+- The bundled rupaka is 0.0.22. The sound block loads a recording through `ctx.asset`, which also reads recordings embedded in the page.
+- The Mac app has the microphone usage text and the audio-input entitlement. No Leela page uses the microphone yet. The launcher has no handler for a page's microphone request.
+- Needs abhyasa 0.0.31 and rupaka 0.0.22 or newer.
+
 ## 1.2.4
 
 Better 3D and 2D demos, on rupaka 0.0.20 and abhyasa 0.0.29.
