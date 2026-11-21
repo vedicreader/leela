@@ -37,7 +37,7 @@ def test_rupaka_vendor_version():
     version = re.search(r"\bversion:\s*'([^']+)'", text).group(1)
     assert version == rupaka.__version__, f'vendored rupaka {version}, installed {rupaka.__version__}: write the bundle again (leela/vendor/README)'
     deps = tomllib.loads((ROOT/'pyproject.toml').read_text())['project']['dependencies']
-    assert 'rupaka>=0.0.23' in deps, 'the floor is the rupaka with the rhythm and listen blocks and ctx.buffer'
+    assert 'rupaka>=0.0.24' in deps, 'the floor is the rupaka whose listen block keeps, replays and saves the playing'
 
 def _vendored_file(text, name):
     "The part of the vendored bundle `text` that came from the rupaka file `name`."
@@ -52,7 +52,7 @@ def test_rupaka_vendor_has_ctx_asset():
 def test_abhyasa_dependency_floor():
     t = tomllib.loads((ROOT/'pyproject.toml').read_text())
     deps = t['project']['dependencies']
-    assert 'abhyasa>=0.0.31' in deps and 'rupaka>=0.0.23' in deps   # abhyasa 0.0.31 copies demo media into the vault, which /leemedia/ serves
+    assert 'abhyasa>=0.0.31' in deps and 'rupaka>=0.0.24' in deps   # abhyasa 0.0.31 copies demo media into the vault, which /leemedia/ serves
     assert 'abhyasa' not in t['tool']['uv']['sources']
 
 def test_room_spec_contract():

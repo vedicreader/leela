@@ -75,6 +75,11 @@ def run_shell(urls, titles=(), **kw):
         from .blocks.settings.settings import theme_background
         try: kw['background'] = theme_background()
         except Exception: pass
+    # A link with `download` (rupaka's Save my playing) does nothing in pywebview without this; macOS's Save panel then asks where.
+    try:
+        import webview
+        webview.settings['ALLOW_DOWNLOADS'] = True
+    except ImportError: pass
     # Off the Dock delegate a quit returns here; reap before finalisation joins a pool that may never finish.
     try: return _run_shell(urls, titles, **kw)
     finally: quit_cleanly()

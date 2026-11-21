@@ -294,3 +294,14 @@ def test_the_shell_opens_on_the_saved_themes_background(monkeypatch):
     light, dark, given = got
     assert light and dark and light != dark, 'each saved theme opens the window on its own background'
     assert given == '#123456', 'a caller-supplied colour wins'
+
+def test_the_shell_lets_a_page_save_a_download(monkeypatch):
+    "pywebview drops a link with `download` unless ALLOW_DOWNLOADS is on; rupaka's Save my playing is such a link, and macOS's Save panel is the user's yes."
+    import pytest
+    webview = pytest.importorskip('webview')
+    import leela.desktop as d
+    monkeypatch.setitem(webview.settings, 'ALLOW_DOWNLOADS', False)
+    monkeypatch.setattr(d, 'quit_cleanly', lambda: None)
+    monkeypatch.setattr(d, '_run_shell', lambda urls, titles, **kw: None)
+    d.run_shell(['http://127.0.0.1:1/'], background='#000000')
+    assert webview.settings['ALLOW_DOWNLOADS'] is True

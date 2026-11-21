@@ -1,4 +1,4 @@
-"rupaka 0.0.23's `listen` block loads `listen-worklet.js` from `Rupaka.base`, the folder of lee-rupaka.js, so Leela serves it at `/leestatic/listen-worklet.js`."
+"rupaka's `listen` block (0.0.23 and later) loads `listen-worklet.js` from `Rupaka.base`, the folder of lee-rupaka.js, so Leela serves it at `/leestatic/listen-worklet.js`."
 import re
 from pathlib import Path
 from starlette.routing import Mount
@@ -23,7 +23,8 @@ def test_the_ide_serves_the_listen_worklet_beside_lee_rupaka_js_before_the_stati
         assert paths.index('/leestatic/listen-worklet.js') < next(i for i, x in enumerate(app.router.routes) if isinstance(x, Mount) and x.path == '/leestatic')
     finally: ws.shutdown_now()
 
-def test_the_vendored_rupaka_bundle_is_0_0_23():
-    "lee-rupaka.js is written from 0.0.23: the listen and rhythm blocks, and `ctx.buffer` for recordings on the page's own origin."
+def test_the_vendored_rupaka_bundle_is_0_0_24():
+    "lee-rupaka.js is written from 0.0.24: the listen and rhythm blocks, `ctx.buffer` for recordings on the page's own origin, and the listen block's Keep my playing and Save my playing."
     js = (ROOT/'leela'/'vendor'/'lee-rupaka.js').read_text()
     assert "Rupaka.block('rhythm'" in js and "Rupaka.block('listen'" in js and 'listen-worklet.js' in js and 'ctx.buffer = name =>' in js
+    assert 'Keep my playing' in js and 'Save my playing' in js

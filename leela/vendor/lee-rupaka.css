@@ -248,6 +248,15 @@
 .rk-listen-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin: 8px 0; }
 .rk-listen .rk-note { display: block; margin: 4px 0; color: var(--rk-mute); }
 .rk-listen-out { margin: 4px 0; padding-left: 18px; font-variant-numeric: tabular-nums; }
+.rk-listen-tick { display: inline-flex; align-items: center; gap: 6px; margin: 4px 0; cursor: pointer; }
+.rk-listen-tick[hidden], .rk-listen-live[hidden], .rk-listen-replay[hidden] { display: none; }
+.rk-listen-live { display: flex; align-items: center; gap: 12px; margin: 8px 0; font-variant-numeric: tabular-nums; }
+.rk-listen-level { width: 160px; height: 10px; accent-color: var(--rk-acc); }
+.rk-listen-line { display: block; width: 100%; max-width: 600px; height: 56px; }
+.rk-listen-axis { stroke: var(--rk-line); stroke-width: 1; }
+.rk-listen-beat { stroke: var(--rk-mute); stroke-width: 2; }
+.rk-listen-beat.rk-listen-on { stroke: var(--rk-ok); }
+.rk-listen-stroke { stroke: var(--rk-fg); stroke-width: 3; stroke-linecap: round; }
 
 /* blocks/pair/pair.css */
 .rk-pair .heads { display: flex; justify-content: space-between; gap: var(--rk-s4); font-size: var(--rk-t-small); color: var(--rk-ink2); margin: 0 0 var(--rk-s2); }

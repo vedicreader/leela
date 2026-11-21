@@ -2,6 +2,17 @@
 
 <!-- do not remove -->
 
+## 1.2.6
+
+Practice with the microphone, on rupaka 0.0.24.
+
+- The bundled rupaka is 0.0.24. It has the `rhythm` block, a practice round on the audio clock, and the `listen` block, which times your playing against the round on this device.
+- The `listen` block shows a level meter and a count of the strokes it hears. With Keep my playing ticked, it plays your last round back against the beats. Save my playing writes the round as a WAV file. Nothing is sent.
+- Leela serves rupaka's `listen-worklet.js` at `/leestatic/listen-worklet.js`.
+- The Mac app built by `tools/ship.sh` has the microphone usage text and the audio-input entitlement. The ship stops if the built app lacks either one.
+- The Mac app's window lets a page save a download. Save my playing opens the macOS Save panel.
+- Needs abhyasa 0.0.31 and rupaka 0.0.24 or newer.
+
 ## 1.2.5
 
 Demos with real recordings, on rupaka 0.0.22 and abhyasa 0.0.31.
