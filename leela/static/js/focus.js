@@ -230,7 +230,7 @@ async function aiComplete() {
   lee.completing = true;
   status('checking Kosha graph, then asking the completion model…');
   let d;
-  try { d = await post('/complete/ai', {code, pos, lang: curLang(), path: key, id: cellIdOf(v)}); }
+  try { d = await post('/complete/ai', {code, pos: pyOffset(code, pos), lang: curLang(), path: key, id: cellIdOf(v)}); }
   catch (e) { return status(e.message || String(e), 'err'); }
   finally { lee.completing = false; }
   if (!d.text) return status(d.note || 'no suggestion', 'err');
@@ -246,7 +246,7 @@ async function showDocs() {
   const v = curEditor();
   if (!v) return status('put the cursor on a name first', 'err');
   status('asking the kernel…');
-  const d = await post('/inspect', {code: LeeCM.getDoc(v), pos: LeeCM.cursor(v)});
+  const code = LeeCM.getDoc(v), d = await post('/inspect', {code, pos: pyOffset(code, LeeCM.cursor(v))});
   if (!d.text) return status(d.note, 'err');
   status('');
   modal(`<div class="lee-mhead">docs<span class="sub">from the object the kernel actually has</span></div>

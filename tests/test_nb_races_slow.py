@@ -442,3 +442,24 @@ def test_ai_completion_ghosts_in_a_cell_and_drops_an_answer_to_text_since_change
         return ghost, await pg.evaluate("LeeCM.ghost(lee.editors.get('c'))"), sent[0]
     ghost, stale, sent = web._run(go, roots=[tmp_path], browser=browser)
     assert ghost == 'a, b' and not stale and sent['id'] == 'c' and sent['path'] == str(a), (ghost, stale, sent)
+
+@BROWSERS
+def test_a_cursor_after_an_emoji_reaches_python_as_a_code_point_index(tmp_path, browser):
+    "CodeMirror counts an emoji as two UTF-16 units and Python as one: completion, docs and split each landed one place late."
+    a = _nb(tmp_path/'e.ipynb', [('c', 'code', 'e = "😀"; f('), ('s', 'code', 'e = "😀"\nb = 1')])
+    async def go(pg):
+        sent = {}
+        async def answer(route):
+            sent[route.request.url.rsplit('/', 1)[-1]] = route.request.post_data_json['pos']
+            await route.fulfill(status=200, content_type='application/json', body=json.dumps({'text': 'x'}))
+        for u in ('**/complete/ai', '**/inspect'): await pg.route(u, answer)
+        await _open(pg, a)
+        await _type(pg, 'c', '')
+        await pg.evaluate('aiComplete()'); await pg.evaluate('showDocs()')
+        await pg.evaluate("() => { focusCell(1); const v = ensureCellMounted(1); LeeCM.setCursor(v, LeeCM.getDoc(v).indexOf('\\n')); }")
+        await pg.evaluate("() => leeAct('cell_split')")
+        await pg.wait_for_function('lee.cells.length === 3', timeout=5000)
+        return sent, await pg.evaluate('lee.cells.map(c => c.source)')
+    sent, cells = web._run(go, roots=[tmp_path], browser=browser)
+    assert sent == {'ai': len('e = "😀"; f('), 'inspect': len('e = "😀"; f(')}, sent
+    assert cells[1:] == ['e = "😀"', '\nb = 1'], cells

@@ -371,6 +371,8 @@ const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
   ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+//: A CodeMirror offset (UTF-16 units) as the code-point index Python reads.
+const pyOffset = (text, pos) => [...text.slice(0, pos)].length;
 //: A path as a person reads it: `root/rel` inside an open folder, `~/rel` under home, else as given. `lee.roots` and `lee.home` come from `/workspace/info`.
 const shownPath = p => {
   p = String(p || ''); const r = (lee.roots || []).find(r => p === r.path || p.startsWith(r.path + '/'));
@@ -1375,7 +1377,7 @@ const ACTIONS = {
   capture:      () => captureScreen(),
   cell_split:   async () => {
     const at = lee.sel, v = lee.editors.get(lee.cells[at].id);
-    if (!await nbEdit({op: 'split', i: at, offset: v ? LeeCM.cursor(v) : 0})) return;
+    if (!await nbEdit({op: 'split', i: at, offset: v ? pyOffset(LeeCM.getDoc(v), LeeCM.cursor(v)) : 0})) return;
     focusCell(at + 1); status('cell split', 'ok');
   },
   cell_split_symbols: async () => {
@@ -6866,7 +6868,7 @@ async function aiComplete() {
   lee.completing = true;
   status('checking Kosha graph, then asking the completion model…');
   let d;
-  try { d = await post('/complete/ai', {code, pos, lang: curLang(), path: key, id: cellIdOf(v)}); }
+  try { d = await post('/complete/ai', {code, pos: pyOffset(code, pos), lang: curLang(), path: key, id: cellIdOf(v)}); }
   catch (e) { return status(e.message || String(e), 'err'); }
   finally { lee.completing = false; }
   if (!d.text) return status(d.note || 'no suggestion', 'err');
@@ -6882,7 +6884,7 @@ async function showDocs() {
   const v = curEditor();
   if (!v) return status('put the cursor on a name first', 'err');
   status('asking the kernel…');
-  const d = await post('/inspect', {code: LeeCM.getDoc(v), pos: LeeCM.cursor(v)});
+  const code = LeeCM.getDoc(v), d = await post('/inspect', {code, pos: pyOffset(code, LeeCM.cursor(v))});
   if (!d.text) return status(d.note, 'err');
   status('');
   modal(`<div class="lee-mhead">docs<span class="sub">from the object the kernel actually has</span></div>

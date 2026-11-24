@@ -371,6 +371,8 @@ const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c =>
   ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+//: A CodeMirror offset (UTF-16 units) as the code-point index Python reads.
+const pyOffset = (text, pos) => [...text.slice(0, pos)].length;
 //: A path as a person reads it: `root/rel` inside an open folder, `~/rel` under home, else as given. `lee.roots` and `lee.home` come from `/workspace/info`.
 const shownPath = p => {
   p = String(p || ''); const r = (lee.roots || []).find(r => p === r.path || p.startsWith(r.path + '/'));

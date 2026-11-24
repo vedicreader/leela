@@ -112,7 +112,7 @@ const ACTIONS = {
   capture:      () => captureScreen(),
   cell_split:   async () => {
     const at = lee.sel, v = lee.editors.get(lee.cells[at].id);
-    if (!await nbEdit({op: 'split', i: at, offset: v ? LeeCM.cursor(v) : 0})) return;
+    if (!await nbEdit({op: 'split', i: at, offset: v ? pyOffset(LeeCM.getDoc(v), LeeCM.cursor(v)) : 0})) return;
     focusCell(at + 1); status('cell split', 'ok');
   },
   cell_split_symbols: async () => {

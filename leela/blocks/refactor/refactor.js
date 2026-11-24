@@ -101,9 +101,6 @@ function refactorTarget() {
   return curEditor();
 }
 
-//: A CodeMirror offset (UTF-16 units) as the code-point index Python reads.
-const pyOffset = (text, pos) => [...text.slice(0, pos)].length;
-
 /* One cell, refactored on the server and put back as a single change over the span that differs, so the cell's
    own undo takes it back. The code cells below go along: a name they read stays returned, and an inline that would
    break them is refused. */
