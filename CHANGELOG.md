@@ -2,6 +2,17 @@
 
 <!-- do not remove -->
 
+## 1.2.7
+
+Prompt-cell edits, refactoring in notebook cells, and inline completion, on ramabana 0.2.120.
+
+- A prompt cell's answer shows the cells the agent changed at once. Before, a cell the agent added showed only after a tab switch. Text you typed into a cell stays. A cell that is running keeps its state and outputs. After an error or Stop, the page reads the changed cells back from the server.
+- `/nb/ask/stream` sends `version` and clears `running` before `done`.
+- Extract variable, constant and method, and inline variable, work on the selected notebook code cell through `/refactor/cell`. Magic and shell lines stay. A name that a later code cell reads stays returned. An inline that would break a later cell is refused. Undo in the cell takes the change back.
+- Inline completion takes its context from the notebook and cell that asked, not from the server's active tab. The page sends one request at a time. It drops an answer when the editor or its text changed while the model worked.
+- Refactoring, inline completion, docs and cell split send the cursor as a code-point index. Before, each character outside the Basic Multilingual Plane, such as an emoji, put the cursor one place too far on the server.
+- Needs ramabana 0.2.120 or newer.
+
 ## 1.2.6
 
 Practice with the microphone, on rupaka 0.0.24.
