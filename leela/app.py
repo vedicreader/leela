@@ -1201,10 +1201,14 @@ def ide_app(ws: Workspace, gate: TerminalGate = None, workspace_catalog=None):
         d = await req.json()
         c = ws.completer
         context = ''
-        if (nb := _doc()) is not None:
-            i = max(0, min(int(d.get('cell', 0)), len(nb) - 1))
-            context = '\n\n'.join(x.source for j, x in enumerate(nb.cells)
-                                    if j != i and x.cell_type == 'code' and x.source.strip())[-6000:]
+        # The notebook and cell the request names; the server's active tab can be another window's.
+        t = _docstore.tab_for(d.get('path')) if d.get('path') else ws.tab
+        nb = _docstore.doc_for(t) if t is not None and t.kind == 'notebook' else None
+        if nb is not None and (cid := d.get('id')):
+            i = next((j for j, x in enumerate(nb.cells) if x.id == cid), len(nb))
+            # Cells above, nearest last, then cells below: what was defined before the cursor matters most.
+            rows = [x for x in [*nb.cells[i+1:], *nb.cells[:i]] if x.cell_type == 'code' and x.source.strip()]
+            context = '\n\n'.join(x.source for x in rows)[-6000:]
         code,at=d.get('code',''),int(d.get('pos',0))
         graph=await _off_loop(ws.search.completion_patches,code,at)
         patches='\n'.join(f"{x['type']}.{x['name']}: {x['doc']}" for x in graph.get('details',[]))

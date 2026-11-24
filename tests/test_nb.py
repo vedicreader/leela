@@ -559,3 +559,33 @@ def test_a_cell_id_that_is_not_nbformats_is_replaced():
     for bad in ('x"><img src=x onerror=alert(1)>', 'a b', 'x' * 65, 7, ''):
         assert re.fullmatch(r'[0-9a-f]{8}', Cell.from_nb({'cell_type': 'code', 'source': '', 'id': bad}).id), bad
     assert Cell.from_nb({'cell_type': 'code', 'source': '', 'id': 'Ab_9-x'}).id == 'Ab_9-x'
+
+def test_a_prompt_that_adds_a_cell_sends_it_with_the_answer_and_is_not_left_running(tmp_path):
+    "The page applied only the asked cell, so an agent's new cell showed after a tab switch; and `done` carried the cell as running."
+    from tests.fakemodel import Step, install
+    p = tmp_path/'a.ipynb'
+    Notebook([Cell(source='x = 1', id='x'), Cell(source='add a cell', cell_type='prompt', id='p')]).save(p)
+    ws = Workspace(roots=[tmp_path], approvals='auto'); ws.open(p)
+    install(ws, [Step(tool=('add_cell', {'path': str(p), 'source': 'y = 2'})), Step(text='added')], token_delay=0)
+    with TestClient(ide_app(ws)) as client:
+        client.get('/tab/state', params={'path': str(p)})
+        events, name = [], None
+        with client.stream('POST', '/nb/ask/stream', json={'i': 1, 'id': 'p', 'path': str(p), 'source': 'add a cell'}) as r:
+            for line in r.iter_lines():
+                if line.startswith('event: '): name = line[7:]
+                elif line.startswith('data: '): events.append((name, json.loads(line[6:])))
+        done = next(d for n, d in events if n == 'done')
+        assert [c['source'] for c in done['cells']][-1] == 'y = 2', done['cells']
+        assert done['version'] == client.get('/tab/state', params={'path': str(p)}).json()['version']
+        assert not done['cell'].get('running') and not any(c.get('running') for c in done['cells'])
+
+def test_ai_completion_takes_context_from_the_notebook_and_cell_it_names(tmp_path):
+    "Context came from the server's active tab and the selected index, which can be another window's notebook or cell."
+    a, b, ws = _two(tmp_path)
+    seen = []
+    ws.completer.complete = lambda code, at, lang, context: seen.append(context) or 'z'
+    with TestClient(ide_app(ws)) as client:
+        for p in (a, b): client.get('/tab/state', params={'path': str(p)})
+        ws.docstore.doc_for(next(t for t in ws.tabs if t.path == str(a)))[2].source = 'from_a = 1'
+        r = client.post('/complete/ai', json={'code': 'x', 'pos': 1, 'path': str(a), 'id': 'x'}).json()
+    assert r['text'] == 'z' and 'from_a = 1' in seen[0] and '\nx\n' not in f'\n{seen[0]}\n', seen

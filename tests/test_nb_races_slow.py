@@ -385,3 +385,60 @@ def test_two_windows_on_one_notebook_keep_each_others_edits_and_a_shared_cell_of
     both, saved, offered, x = web._run(go, roots=[tmp_path], browser=browser)
     assert both == ('x = 100', 'y = 200'), both
     assert saved is False and offered and x == 'x = 100', (saved, offered, x)
+
+@BROWSERS
+def test_a_cell_the_prompt_agent_adds_shows_without_a_tab_switch_and_typed_text_stays(tmp_path, browser, monkeypatch):
+    "The page applied only the asked cell's reply; the agent's new cell showed after switching tabs and back."
+    from tests.fakemodel import Step, install
+    a = _nb(tmp_path/'p.ipynb', [('x', 'code', 'x = 1'), ('p', 'markdown', 'add y')])
+    d = json.loads(a.read_text()); d['cells'][1]['metadata'] = {'leela': {'kind': 'prompt'}}; a.write_text(json.dumps(d))
+    def model(ws):
+        ws._notebook_approvals.mode = 'auto'   # the write would wait on an approval nobody answers
+        return install(ws, [Step(tool=('add_cell', {'path': str(a), 'source': 'y = 2'})), Step(text='added')], token_delay=0)
+    monkeypatch.setattr(web, 'fake_model', model)
+    async def go(pg):
+        await _open(pg, a)
+        routed, seen, release = _holding(pg, '**/nb/ask/stream', response=True); await routed
+        await pg.evaluate('() => { window.__ran = runCell(1); }')
+        await seen.wait()
+        await _type(pg, 'x', '  # mine')
+        release.set(); await pg.evaluate('window.__ran')
+        await pg.wait_for_function('lee.cells.length === 3', timeout=5000)
+        y = await pg.evaluate("document.querySelector(`#editor .lee-cell[data-id=\"${lee.cells[2].id}\"]`)?.textContent || ''")
+        return y, await pg.evaluate("LeeCM.getDoc(lee.editors.get('x'))"), await pg.evaluate("!!lee.cells.find(c => c.id === 'p').running")
+    y, x, running = web._run(go, roots=[tmp_path], browser=browser)
+    assert 'y = 2' in y and x == 'x = 1  # mine' and not running, (y, x, running)
+
+@BROWSERS
+def test_extract_variable_works_in_a_notebook_cell(tmp_path, browser):
+    "Extract variable refused every notebook: 'open a Python file to refactor'."
+    a = _nb(tmp_path/'r.ipynb', [('c', 'code', 'y = (1 + 2) * 3'), ('d', 'code', 'print(y)')])
+    async def go(pg):
+        await _open(pg, a)
+        await pg.evaluate("() => { focusCell(0); const v = ensureCellMounted(0); LeeCM.setSelection(v, 4, 11); }")
+        await pg.evaluate("() => { leeAct('extract_variable'); }")   # it waits on the name dialog
+        await pg.wait_for_selector('#dialoginput'); await pg.fill('#dialoginput', 'z'); await pg.keyboard.press('Enter')
+        await pg.wait_for_function("LeeCM.getDoc(lee.editors.get('c')).startsWith('z =')", timeout=5000)
+        return await pg.evaluate("LeeCM.getDoc(lee.editors.get('c'))"), await pg.evaluate(DIRTY)
+    text, dirty = web._run(go, roots=[tmp_path], browser=browser)
+    assert text == 'z = (1 + 2)\ny = z * 3' and dirty, (text, dirty)
+
+@BROWSERS
+def test_ai_completion_ghosts_in_a_cell_and_drops_an_answer_to_text_since_changed(tmp_path, browser):
+    "A slow model's answer became a ghost after more typing, since only the caret position was compared."
+    a = _nb(tmp_path/'c.ipynb', [('c', 'code', 'x = foo(')])
+    async def go(pg):
+        sent = []
+        async def answer(route):
+            sent.append(route.request.post_data_json); await asyncio.sleep(.3)
+            await route.fulfill(status=200, content_type='application/json', body=json.dumps({'text': 'a, b', 'model': 'cheap'}))
+        await pg.route('**/complete/ai', answer)
+        await _open(pg, a)
+        await _type(pg, 'c', '')
+        await pg.evaluate('aiComplete()')
+        ghost = await pg.evaluate("LeeCM.ghost(lee.editors.get('c'))")
+        await pg.evaluate("() => LeeCM.clearGhost(lee.editors.get('c'))")
+        late = asyncio.ensure_future(pg.evaluate('aiComplete()')); await pg.wait_for_timeout(50); await pg.keyboard.type('1'); await late
+        return ghost, await pg.evaluate("LeeCM.ghost(lee.editors.get('c'))"), sent[0]
+    ghost, stale, sent = web._run(go, roots=[tmp_path], browser=browser)
+    assert ghost == 'a, b' and not stale and sent['id'] == 'c' and sent['path'] == str(a), (ghost, stale, sent)

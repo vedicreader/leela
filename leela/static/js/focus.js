@@ -216,15 +216,26 @@ document.addEventListener('pointerdown', e => {
   if ($('.lee-selection-tools') && !e.target.closest('.lee-selection-tools, .cm-editor')) closeSelectionHelp();
 }, true);
 
+//: The notebook cell id behind editor `v`, or '' for a file, the scratch editor or the split pane.
+const cellIdOf = v => lee.kind === 'notebook' ? (lee.cells.find(c => lee.editors.get(c.id) === v)?.id || '') : '';
+
+/* One suggestion at a time. The answer becomes a ghost only in the editor it was asked from, still on screen and
+   still holding the text it was asked about: a cheap model answers slowly, and a stale ghost inserts the wrong code. */
 async function aiComplete() {
   const v = curEditor();
   if (!v) return status('put the cursor in some code first', 'err');
   if (LeeCM.ghost(v)) { LeeCM.acceptGhost(v); return status('accepted', 'ok'); }
-  const pos = LeeCM.cursor(v);
+  if (lee.completing) return status('a suggestion is already on its way', 'err');
+  const pos = LeeCM.cursor(v), code = LeeCM.getDoc(v), key = lee.tabKey;
+  lee.completing = true;
   status('checking Kosha graph, then asking the completion model…');
-  const d = await post('/complete/ai', {code: LeeCM.getDoc(v), pos, lang: curLang(), cell: lee.sel});
+  let d;
+  try { d = await post('/complete/ai', {code, pos, lang: curLang(), path: key, id: cellIdOf(v)}); }
+  catch (e) { return status(e.message || String(e), 'err'); }
+  finally { lee.completing = false; }
   if (!d.text) return status(d.note || 'no suggestion', 'err');
-  if (LeeCM.cursor(v) !== pos) return status('cursor moved while the model was thinking', 'err');
+  if (lee.tabKey !== key || curEditor() !== v || !v.dom?.isConnected) return status('suggestion dropped: the editor changed', 'err');
+  if (LeeCM.cursor(v) !== pos || LeeCM.getDoc(v) !== code) return status('suggestion dropped: you typed while the model was thinking', 'err');
   LeeCM.focus(v);
   LeeCM.setGhost(v, d.text);
   const graph = d.graph_methods ? ` · ${d.graph_methods} Kosha graph method(s)` : '';

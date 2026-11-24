@@ -83,3 +83,31 @@ def test_a_request_the_server_makes_is_answered_and_a_silent_server_is_not_waite
             assert s.request(method, f, f.read_text(), None, 0, extra) is None
             assert time.monotonic() - t < .1, 'a method that just timed out is answered empty at once'
     finally: s.close()
+
+def test_a_notebook_cell_refactors_with_its_magics_and_the_cells_below_it():
+    "Extract and inline refused every notebook: they read a `.py` file on disk."
+    from leela.blocks.refactor.app import cell_refactor
+    src = '%matplotlib inline\nx = 1\ny = (x + 2) * 3\n!ls'
+    assert cell_refactor(src, 'print(y)', 'extract', src.index('(x'), src.index(') *') + 1, 'variable', 'z')[0] == \
+        '%matplotlib inline\nx = 1\nz = (x + 2)\ny = z * 3\n!ls'
+    src = 'a = 1\nb = a + 2\nc = b * 2'
+    after, _ = cell_refactor(src, 'print(b)', 'extract', src.index('b ='), src.index('\nc'), 'function', 'g')
+    assert 'return b' in after and 'b = g(a)' in after, 'a name a later cell reads stays returned'
+    src = 'a = [1, 2]\nb = len(a)\nprint(b)'
+    assert cell_refactor(src, 'print(a)', 'inline', pos=src.index('b ='))[0] == 'a = [1, 2]\nprint(len(a))'
+    import pytest
+    with pytest.raises(ValueError, match='later cell'): cell_refactor('b = 2', 'print(b)', 'inline', pos=0)
+    src = 'x = 5\ny = x * 3.14'
+    assert cell_refactor(src, 'not python(', 'extract', src.index('3.14'), len(src), 'constant', 'pi')[0] == 'PI = 3.14\nx = 5\ny = x * PI'
+
+def test_the_cell_route_answers_text_and_writes_nothing(tmp_path):
+    from starlette.testclient import TestClient
+    from leela.app import ide_app
+    from leela.workspace import Workspace
+    src = 'y = (1 + 2) * 3'
+    with TestClient(ide_app(Workspace(roots=[tmp_path]))) as c:
+        r = c.post('/refactor/cell', json={'op': 'extract', 'source': src, 'start': 4, 'end': 11, 'kind': 'variable', 'name': 'z'}).json()
+        assert r['ok'] and r['after'] == 'z = (1 + 2)\ny = z * 3', r
+        assert not c.post('/refactor/cell', json={'op': 'extract', 'source': 'y = 1', 'start': 0, 'end': 3, 'kind': 'variable', 'name': 'z'}).json().get('ok')
+        assert not c.post('/refactor/cell', json={'op': 'rm', 'source': 'y = 1'}).json().get('ok')
+    assert not list(tmp_path.iterdir())

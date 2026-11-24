@@ -283,6 +283,7 @@ GET,POST /project/fastship
 GET,POST /project/fastship/action
 GET,POST /project/nbdev_prepare
 GET,POST /refactor/apply
+GET,POST /refactor/cell
 GET,POST /refactor/inline
 GET,POST /refactor/move
 GET,POST /refactor/preview

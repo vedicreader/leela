@@ -1,13 +1,13 @@
 "Preview and atomically apply workspace text replacements."
 
 from __future__ import annotations
-import time, uuid
+import re, time, uuid
 
 from fastcore.all import Path
 
 from ...core.web import fail, off_loop
 
-__all__ = ['CAPS', 'connect']
+__all__ = ['CAPS', 'connect', 'cell_refactor']
 
 CAPS = ('fs', 'journal', 'docs', 'search')
 
@@ -35,6 +35,39 @@ def _candidates(ctx, names, limit=400):
     try: out = [h.path for name in names for h in ctx.search.usages(name, limit)]
     except Exception: out = [str(p) for p in ctx.fs.walk(limit=5000)]
     return sorted({str(p) for p in out if str(p).endswith('.py')})
+
+_MAGIC = re.compile(r'^([ \t]*)[%!]', re.M)
+
+def _mask(src):
+    "IPython magic and shell lines as comments of the same length, so `ast` parses the cell; and the lines to put back."
+    return _MAGIC.sub(lambda m: m[1] + '#', src), [(_MAGIC.sub(lambda m: m[1] + '#', l), l) for l in src.split('\n') if _MAGIC.match(l)]
+
+def _unmask(text, rows):
+    "Put the masked magic lines back, in order."
+    out, rows = [], list(rows)
+    for l in text.split('\n'):
+        if rows and l == rows[0][0]: l = rows.pop(0)[1]
+        out.append(l)
+    return '\n'.join(out)
+
+def cell_refactor(source, later='', op='extract', start=0, end=0, kind='variable', name='', pos=0):
+    "`(after, edits)` for one notebook cell. The code cells after it ride along as context the change must leave alone."
+    from kosha.refactor import extract, inline
+    cell, rows = _mask(source)
+    tail = _mask(later)[0] if later.strip() else ''
+    run = lambda text: extract('<cell>', text, start, end, kind, name) if op == 'extract' else inline('<cell>', text, pos)
+    if tail:
+        try: row = run(cell + '\n' + tail)
+        except (ValueError, SyntaxError):
+            # A later cell that does not parse says nothing about a variable or constant lifted out of this one.
+            if op != 'extract' or kind not in ('variable', 'constant'): raise
+            tail, row = '', run(cell)
+    else: row = run(cell)
+    after = row.after
+    if tail:
+        if not after.endswith('\n' + tail): raise ValueError('a later cell uses this code; the change would break it')
+        after = after[:-len(tail) - 1]
+    return _unmask(after, rows), row.edits
 
 def connect(app, ctx):
     from kosha.refactor import replace_plan, extract, inline, module_of, move_plan, top_symbols
@@ -65,6 +98,16 @@ def connect(app, ctx):
         try:
             d = await req.json()
             return await _one_file(d, 'inline', inline, d.get('pos'))
+        except Exception as e: return fail(e)
+    @rt('/refactor/cell')
+    async def refactor_cell(req):
+        "Extract or inline inside one notebook cell's text. Nothing is written: the page applies it to the cell, where undo reaches it."
+        try:
+            d = await req.json()
+            if d.get('op') not in ('extract', 'inline'): return fail('unknown refactoring')
+            after, edits = await off_loop(cell_refactor, str(d.get('source') or ''), str(d.get('later') or ''), d['op'],
+                                          d.get('start', 0), d.get('end', 0), d.get('kind'), d.get('name', ''), d.get('pos', 0))
+            return {'ok': True, 'after': after, 'edits': edits}
         except Exception as e: return fail(e)
     @rt('/replace/preview')
     async def replace_preview(req):

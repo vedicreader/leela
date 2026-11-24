@@ -83,19 +83,56 @@ async function workspaceHistoryRedo() {
   } catch (e) { status(e.message || String(e), 'err'); }
 }
 
-/* Extraction and inlining run against the file on disk: the endpoints read it themselves and
-   address it by character offset, so an unsaved buffer would be rewritten from text the server
-   never saw. Both refuse rather than save on the user's behalf. */
+/* Extraction and inlining in a file run against the file on disk: the endpoints read it themselves and address it by
+   character offset, so an unsaved buffer would be rewritten from text the server never saw. Both refuse rather than
+   save on the user's behalf. In a notebook they run on the selected code cell's text and land in its editor. */
 function refactorTarget() {
+  if (lee.observer || lee.present) { status('refactoring is not available here', 'err'); return null; }
+  if (lee.readOnly) { status(`${compactPath(lee.path)} is read-only`, 'err'); return null; }
+  if (lee.kind === 'notebook' && lee.scope !== 'exec' && lee.activeEditor !== 'secondary') {
+    const c = lee.cells[lee.sel], view = c && lee.editors.get(c.id);
+    if (c?.cell_type !== 'code' || !view || nbLang() !== 'python') { status('select a Python code cell to refactor', 'err'); return null; }
+    return view;
+  }
   if (lee.kind !== 'text' || !(lee.path || '').endsWith('.py')) {
-    status('open a Python file to refactor', 'err'); return null;
+    status('open a Python file or notebook to refactor', 'err'); return null;
   }
   if (lee.dirtyBuffers.has(lee.path)) { status('save the file before refactoring', 'err'); return null; }
   return curEditor();
 }
 
+//: A CodeMirror offset (UTF-16 units) as the code-point index Python reads.
+const pyOffset = (text, pos) => [...text.slice(0, pos)].length;
+
+/* One cell, refactored on the server and put back as a single change over the span that differs, so the cell's
+   own undo takes it back. The code cells below go along: a name they read stays returned, and an inline that would
+   break them is refused. */
+async function runCellRefactor(view, body, note) {
+  const key = lee.tabKey, i = lee.sel, id = lee.cells[i].id, source = LeeCM.getDoc(view);
+  const later = lee.cells.slice(i + 1).filter(c => c.cell_type === 'code')
+    .map(c => lee.editors.has(c.id) ? LeeCM.getDoc(lee.editors.get(c.id)) : c.source).join('\n');
+  const at = p => pyOffset(source, p);
+  const sent = {...body, ...(body.start != null ? {start: at(body.start), end: at(body.end)} : {}), ...(body.pos != null ? {pos: at(body.pos)} : {})};
+  const data = await post('/refactor/cell', {...sent, source, later});
+  if (lee.tabKey !== key || lee.editors.get(id) !== view || LeeCM.getDoc(view) !== source)
+    return status('the cell changed while refactoring; try again', 'err');
+  const {from, to} = textSpan(source, data.after);
+  LeeCM.replaceRange(view, from, source.length - to, data.after.slice(from, data.after.length - to));
+  LeeCM.focus(view); status(`${note} · undo in the cell takes it back`, 'ok');
+}
+
+//: Common prefix length, and common suffix length after it, of two texts.
+function textSpan(a, b) {
+  let from = 0; while (from < a.length && from < b.length && a[from] === b[from]) from++;
+  let to = 0; while (to < a.length - from && to < b.length - from && a[a.length - 1 - to] === b[b.length - 1 - to]) to++;
+  return {from, to};
+}
+
 async function runRefactor(url, body, note) {
-  const data = await post(url, {path: lee.path, ...body}), edits = data.summary.edits;
+  const view = curEditor();
+  if (lee.kind === 'notebook') return runCellRefactor(view, {op: url === '/refactor/inline' ? 'inline' : 'extract', ...body}, note);
+  const text = LeeCM.getDoc(view), at = p => p == null ? p : pyOffset(text, p);
+  const data = await post(url, {path: lee.path, ...body, start: at(body.start), end: at(body.end), pos: at(body.pos)}), edits = data.summary.edits;
   if (!await confirmDialog('Refactor', `Change ${edits} place${edits === 1 ? '' : 's'} in this file?`, 'apply')) return;
   await post('/refactor/apply', {token: data.token});
   await takeDiskVersion(lee.path); refreshFileTree(undefined, false); status(note, 'ok');

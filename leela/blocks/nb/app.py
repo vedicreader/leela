@@ -442,7 +442,9 @@ def connect(app, ctx):
                         break
                     yield sse(kind, {'text': value, 'id': asked.id, **mine})
                 await task
+                asked.running = False   # before `done`, so the cells it carries are not stuck running
                 yield sse('done', {'ok': a.ready, 'i': place(nb, asked), 'id': asked.id, **mine, 'cell': asked.dict(), 'note': a.note,
+                                    'version': nb.version,
                                     'usage': a.turn_use.dict(), 'usage_label': repr(a.turn_use),
                                     'problems': a.problems,
                                     'cells': [x.dict() for x in nb.cells],
