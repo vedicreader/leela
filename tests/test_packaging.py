@@ -561,7 +561,7 @@ def test_the_thin_app_may_use_the_microphone(tmp_path):
     assert 'grep -q com.apple.security.device.audio-input' in mk and 'NSMicrophoneUsageDescription' in mk, 'make verify checks both in the built app'
 
 def test_the_fat_app_may_use_the_microphone(mac):
-    """The DMG app from `make ship-fat` (py2app, tools/ship.sh) does not read kavacha.toml, so its plist and entitlements carry the microphone themselves, with the thin app's text, and the ship fails on a built app without them."""
+    """The DMG app from `make ship` (py2app, tools/ship.sh) does not read kavacha.toml, so its plist and entitlements carry the microphone themselves, with the thin app's text, and the ship fails on a built app without them."""
     import plistlib, tomllib
     usage = tomllib.loads((ROOT/'packaging'/'kavacha.toml').read_text())['usage']['NSMicrophoneUsageDescription']
     assert mac.PLIST.get('NSMicrophoneUsageDescription') == usage

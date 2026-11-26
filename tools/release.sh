@@ -1,5 +1,5 @@
 #!/bin/sh
-# usage: V=<version> [APP=1] [YES=1] tools/release.sh (make ship V=<version> does this). One Leela release, every step in order; each
+# usage: V=<version> [APP=1] [YES=1] tools/release.sh (make ship-archive V=<version> does this). One Leela release, every step in order; each
 # step is skipped when it is already done, so the command can always run again after a stop:
 #   1. main is clean, pushed, and its CI passed        5. lock-publish: lock signed, on the test channel (asks for the key)
 #   2. the GitHub release V exists (CHANGELOG notes)   6. you check an app on the test channel; YES=1 skips the question
@@ -7,7 +7,7 @@
 #   4. a lock that pins V, tested fresh with extras    8. with APP=1 or no app-v<V> yet: ship-app (sign, notarize, cask)
 # Steps 5 and 7 sign with ~/.ssh/leela_lock_ed25519 through the SSH agent: start one in this shell first (ssh-add --apple-use-keychain).
 set -eu
-: "${V:?Give the version: make ship V=<version>}"
+: "${V:?Give the version: make ship-archive V=<version>}"
 echo "$V" | grep -qE '^[0-9]+(\.[0-9]+)+$' || { echo "V must be a version such as 1.0.1" >&2; exit 1; }
 cd "$(dirname "$0")/.."
 R=vedicreader/leela LOCKPY="uv run --frozen python tools/lock.py"
@@ -15,11 +15,11 @@ unset GITHUB_TOKEN GH_TOKEN   # the keyring of gh signs in; a stale token in the
 say() { printf '\n== %s\n' "$*"; }
 gitc() { git -c credential.helper= -c 'credential.helper=!gh auth git-credential' -c url.https://github.com/.insteadOf=git@github.com: "$@"; }
 
-need_gh() { gh release list -R $R --limit 1 >/dev/null 2>&1 || { echo "gh cannot reach $R: it is not signed in, or the keychain is locked. Run gh auth status, then gh auth login if it says so, and run make ship V=$V again" >&2; exit 1; }; }
+need_gh() { gh release list -R $R --limit 1 >/dev/null 2>&1 || { echo "gh cannot reach $R: it is not signed in, or the keychain is locked. Run gh auth status, then gh auth login if it says so, and run make ship-archive V=$V again" >&2; exit 1; }; }
 need_gh   # a broken gh login stops the release here, before the slow steps
 
 say "1. main is clean, pushed and green"
-test "$(git branch --show-current)" = main || { echo "make ship runs on main" >&2; exit 1; }
+test "$(git branch --show-current)" = main || { echo "make ship-archive runs on main" >&2; exit 1; }
 grep -q "^__version__ = \"$V\"" leela/__init__.py || { echo "leela/__init__.py is not version $V" >&2; exit 1; }
 test -z "$(git status --porcelain)" || { echo "the tree has changes or untracked files; commit them, or git stash push -u, then run again" >&2; exit 1; }
 gitc fetch -q origin main
@@ -76,7 +76,7 @@ if [ "$stable" = "$N" ]; then echo "stable already points at lock $N"
 elif [ "${YES:-}" = 1 ]; then echo "YES=1: no question"
 else
   printf 'Lock %s (leela %s) is on the test channel. Open an app with LEELA_LOCK_CHANNEL=test, or a build from it, and check it.\nPromote it to stable? [y/N] ' "$N" "$V"
-  read -r ok || ok=; [ "$ok" = y ] || [ "$ok" = yes ] || { echo "not promoted; run make ship V=$V again when it is good"; exit 1; }
+  read -r ok || ok=; [ "$ok" = y ] || [ "$ok" = yes ] || { echo "not promoted; run make ship-archive V=$V again when it is good"; exit 1; }
 fi
 
 say "7. promote lock $N to stable"

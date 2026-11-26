@@ -1,4 +1,4 @@
-"`make ship` (tools/release.sh) stops at once when gh is not usable, before any slow or outward step."
+"`make ship-archive` (tools/release.sh) stops at once when gh is not usable, before any slow or outward step."
 import os, subprocess
 from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
