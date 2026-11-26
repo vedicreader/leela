@@ -2,6 +2,13 @@
 
 <!-- do not remove -->
 
+## 1.2.8
+
+Escape with a completion list open keeps you in the cell.
+
+- In a notebook code cell, Escape with the completion list open closes the list. The cell stays in edit mode and the caret stays visible. A second Escape leaves the cell. Before, one Escape closed the list and also left the cell, and the caret disappeared until you clicked or moved a line.
+- Escape with inline ghost text showing dismisses the ghost text and keeps the cell in edit mode.
+
 ## 1.2.7
 
 Prompt-cell edits, refactoring in notebook cells, and inline completion, on ramabana 0.2.120.
