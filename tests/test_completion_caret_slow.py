@@ -75,3 +75,25 @@ def test_next_keystroke_after_accepting_a_completion_lands_at_the_caret(tmp_path
     out = asyncio.run(_real_page(lambda pg: _accept_then_type(pg, path, line, how, typed, name), tmp_path, browser))
     assert out['text'].startswith(name + '('), out
     assert out['line'] == line and out['col'] == len(name + '('), out
+
+CARET = f"""() => {{ {VIEW} const c = v.dom.querySelector('.cm-cursor');
+  return {{focused: v.hasFocus, drawn: !!c && getComputedStyle(c).display !== 'none',
+          listed: !!v.dom.querySelector('.cm-tooltip-autocomplete')}}; }}"""
+
+async def _escape_twice(pg, path):
+    await pg.evaluate('p => leeOpenFile(p)', str(path))
+    await pg.wait_for_selector('.cm-content')
+    await pg.evaluate(f"() => {{ {VIEW} v.focus(); }}")
+    await pg.keyboard.type('prin')
+    await pg.wait_for_selector(LISTED, timeout=60000)
+    await pg.keyboard.press('Escape'); await pg.wait_for_timeout(200)
+    first = await pg.evaluate(CARET)
+    await pg.keyboard.press('Escape'); await pg.wait_for_timeout(200)
+    return first, await pg.evaluate(CARET)
+
+def test_escape_closes_the_completion_list_and_keeps_the_caret(tmp_path):
+    "The first Escape is the list's, so the cell stays in edit mode; the second leaves the cell."
+    path = tmp_path / 't.ipynb'; _nb(path, '')
+    first, second = asyncio.run(_real_page(lambda pg: _escape_twice(pg, path), tmp_path))
+    assert first == {'focused': True, 'drawn': True, 'listed': False}, first
+    assert not second['focused'], second

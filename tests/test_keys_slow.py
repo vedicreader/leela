@@ -86,7 +86,8 @@ def test_mod_w_closes_a_tab_and_leaves_the_window_to_close_when_none_is_open(tmp
     assert got['ran'].count('close_tab') == 2 and not got['prevented'], got
 
 def test_notebook_command_mode_letters_insert_and_delete_cells(tmp_path):
-    "Jupyter's letters: Escape leaves the cell editor, `b` inserts below, `d d` deletes, and a letter typed in a cell stays text."
+    """Jupyter's letters: Escape leaves the cell editor, `b` inserts below, `d d` deletes, and a letter typed in a cell stays text.
+    The typed `b` opens the completion list, so the first Escape closes the list and the second leaves the editor."""
     nb = tmp_path/'n.ipynb'; _nb(nb)
     async def go(pg):
         await pg.evaluate(WATCH)
@@ -96,6 +97,8 @@ def test_notebook_command_mode_letters_insert_and_delete_cells(tmp_path):
         await pg.wait_for_timeout(200)
         await pg.keyboard.type('b')
         typed = await pg.evaluate("() => LeeCM.getDoc(lee.editors.get('c1'))")
+        await pg.wait_for_selector('.cm-tooltip-autocomplete', timeout=60000)
+        await pg.keyboard.press('Escape')
         await pg.keyboard.press('Escape')
         await pg.keyboard.press('b')
         await pg.wait_for_function('() => lee.cells.length === 3')

@@ -513,8 +513,8 @@ export function setColumnMode(view, on) {
 }
 export const toggleColumnMode = view => setColumnMode(view, !columnMode(view));
 function headCol(s) { return s.selection.main.head - s.doc.lineAt(s.selection.main.head).from; }
-//: Whether Escape is the editor's: it leaves column mode, then collapses several cursors to one.
-export const holdsEscape = view => columnMode(view) || view.state.selection.ranges.length > 1;
+//: Whether Escape is the editor's: it closes the completion list or ghost text, leaves column mode, then collapses several cursors to one.
+export const holdsEscape = view => completionStatus(view.state) != null || !!ghost(view) || columnMode(view) || view.state.selection.ranges.length > 1;
 //: `grow` copies the edge range's anchor and head columns onto the next line, so a block grows by a line.
 function addColumn(view, dir, grow = false) {
   const {state} = view, rs = state.selection.ranges, heads = rs.map(r => r.head);
